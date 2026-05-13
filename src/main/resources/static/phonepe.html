@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CharanPe Dashboard</title>
+
+    <style>
+        :root{
+          --primary:#38bdf8;
+          --primary-dark:#0284c7;
+          --secondary:#7dd3fc;
+          --bg:#e0f2fe;
+          --card:#ffffff;
+          --text:#0f172a;
+          --muted:#64748b;
+          --border:#cbd5e1;
+          --success:#16a34a;
+          --danger:#dc2626;
+          --shadow:0 18px 45px rgba(14,165,233,.15);
+        }
+
+        *{
+          margin:0;
+          padding:0;
+          box-sizing:border-box;
+          font-family:Inter,Segoe UI,Arial,sans-serif;
+        }
+
+        body{
+          min-height:100vh;
+          background:linear-gradient(135deg,#e0f7ff,#bae6fd,#dbeafe);
+          color:var(--text);
+        }
+
+        .hero{
+          text-align:center;
+          padding:40px 20px 55px;
+          color:#0c4a6e;
+        }
+
+        .hero-badge{
+          display:inline-flex;
+          align-items:center;
+          gap:10px;
+          background:rgba(255,255,255,.75);
+          border:1px solid rgba(255,255,255,.9);
+          padding:12px 18px;
+          border-radius:999px;
+          font-weight:900;
+          margin-bottom:18px;
+          box-shadow:var(--shadow);
+        }
+
+        .hero h1{
+          font-size:48px;
+          font-weight:950;
+          margin-bottom:12px;
+          color:#075985;
+        }
+
+        .hero p{
+          font-size:18px;
+          color:#0369a1;
+        }
+
+        .container{
+          width:min(1180px,calc(100% - 40px));
+          margin:0 auto 50px;
+        }
+
+        .grid{
+          display:grid;
+          grid-template-columns:repeat(3,1fr);
+          gap:22px;
+        }
+
+        .card{
+          background:rgba(255,255,255,.95);
+          border:1px solid rgba(255,255,255,.9);
+          border-radius:26px;
+          padding:24px;
+          min-height:250px;
+          backdrop-filter:blur(8px);
+          box-shadow:var(--shadow);
+          transition:.25s ease;
+        }
+
+        .card:hover{
+          transform:translateY(-5px);
+        }
+
+        .card-title{
+          display:flex;
+          align-items:center;
+          gap:12px;
+          margin-bottom:12px;
+        }
+
+        .icon{
+          width:45px;
+          height:45px;
+          border-radius:15px;
+          display:grid;
+          place-items:center;
+          background:#e0f2fe;
+          color:#0284c7;
+          font-size:22px;
+        }
+
+        .card h2{
+          font-size:22px;
+          color:#0369a1;
+        }
+
+        .method{
+          margin-left:auto;
+          background:#e0f2fe;
+          color:#0284c7;
+          font-size:12px;
+          font-weight:900;
+          padding:7px 11px;
+          border-radius:999px;
+        }
+
+        .card p{
+          color:var(--muted);
+          margin-bottom:18px;
+          line-height:1.55;
+          font-size:15px;
+        }
+
+        input::-webkit-outer-spin-button,
+        input::-webkit-inner-spin-button{
+          -webkit-appearance:none;
+          margin:0;
+        }
+
+        input[type=number]{
+          -moz-appearance:textfield;
+          appearance:textfield;
+        }
+
+        input{
+          width:100%;
+          padding:15px 16px;
+          border-radius:15px;
+          border:1px solid var(--border);
+          margin-bottom:14px;
+          font-size:15px;
+          outline:none;
+          background:#f8fdff;
+        }
+
+        input:focus{
+          border-color:var(--primary-dark);
+          box-shadow:0 0 0 4px rgba(56,189,248,.2);
+        }
+
+        button{
+          width:100%;
+          border:none;
+          border-radius:15px;
+          padding:15px 18px;
+          cursor:pointer;
+          font-size:15px;
+          font-weight:900;
+          color:white;
+          background:linear-gradient(135deg,#38bdf8,#0284c7);
+          box-shadow:0 12px 24px rgba(56,189,248,.25);
+          transition:.2s ease;
+        }
+
+        button:hover{
+          transform:translateY(-2px);
+        }
+
+        button.green{
+          background:linear-gradient(135deg,#22c55e,#15803d);
+        }
+
+        button.purple{
+          background:linear-gradient(135deg,#7dd3fc,#0284c7);
+        }
+
+        .status-panel{
+          margin-top:24px;
+          background:white;
+          border-radius:22px;
+          padding:18px 22px;
+          box-shadow:var(--shadow);
+          border-left:6px solid #38bdf8;
+          font-weight:800;
+          color:#0369a1;
+        }
+
+        .success{color:var(--success)}
+        .error{color:var(--danger)}
+
+        @media(max-width:1000px){
+          .grid{grid-template-columns:repeat(2,1fr)}
+        }
+
+        @media(max-width:700px){
+          .grid{grid-template-columns:1fr}
+          .hero h1{font-size:34px}
+          .container{width:min(100% - 24px,1180px)}
+        }
+    </style>
+</head>
+<body>
+
+<header class="hero">
+    <div class="hero-badge">💙 CharanPe Digital Payments</div>
+    <h1>CharanPe Dashboard</h1>
+    <p>Manage payments, transactions, balances, profile and transfers with a clean pastel skyblue UI.</p>
+</header>
+
+<main class="container">
+    <section class="grid">
+
+        <div class="card">
+            <div class="card-title">
+                <div class="icon">👤</div>
+                <h2>Profile</h2>
+                <span class="method">GET</span>
+            </div>
+            <p>View currently logged-in CharanPe user profile details.</p>
+            <button onclick="getProfile()">View Profile</button>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <div class="icon">🔐</div>
+                <h2>Login User</h2>
+                <span class="method">POST</span>
+            </div>
+            <p>Authenticate user using registered phone number.</p>
+            <input type="number" id="loginPhno" placeholder="Enter phone number">
+            <button class="purple" onclick="loginUser()">Login User</button>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <div class="icon">👥</div>
+                <h2>All Users</h2>
+                <span class="method">GET</span>
+            </div>
+            <p>Display all registered CharanPe users in a separate result page.</p>
+            <button onclick="getAllUsers()">View Users</button>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <div class="icon">🧾</div>
+                <h2>Make Payment</h2>
+                <span class="method">PUT</span>
+            </div>
+            <p>Perform merchant payments instantly.</p>
+            <input type="number" id="paymentAmount" placeholder="Payment amount">
+            <button class="green" onclick="makePayment()">Make Payment</button>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <div class="icon">💸</div>
+                <h2>Send Money</h2>
+                <span class="method">PUT</span>
+            </div>
+            <p>Transfer money securely to another CharanPe user.</p>
+            <input type="number" id="sendPhno" placeholder="Receiver phone number">
+            <input type="number" id="sendAmount" placeholder="Enter amount">
+            <button class="green" onclick="sendMoney()">Send Money</button>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <div class="icon">💰</div>
+                <h2>Check Balance</h2>
+                <span class="method">GET</span>
+            </div>
+            <p>Check available balance for the currently logged-in user.</p>
+            <button onclick="checkBalance()">Check Balance</button>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <div class="icon">📄</div>
+                <h2>Transactions</h2>
+                <span class="method">GET</span>
+            </div>
+            <p>View complete transaction history.</p>
+            <button onclick="getAllTransactions()">View Transactions</button>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <div class="icon">📞</div>
+                <h2>Transactions By Phone</h2>
+                <span class="method">GET</span>
+            </div>
+            <p>Search transactions using customer phone number.</p>
+            <input type="number" id="searchPhno" placeholder="Enter phone number">
+            <button onclick="getTransactionsByPhno()">Search By Phone</button>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <div class="icon">🆔</div>
+                <h2>Transaction By ID</h2>
+                <span class="method">GET</span>
+            </div>
+            <p>Find transaction details using transaction id.</p>
+            <input type="number" id="transactionId" placeholder="Enter transaction ID">
+            <button onclick="getTransactionById()">Search By ID</button>
+        </div>
+
+    </section>
+
+    <div id="status" class="status-panel">
+        Ready. Results will open in a separate browser tab with a professional view.
+    </div>
+</main>
+
+<script>
+    const BASE_URL = "http://localhost:8081/phonepe";
+
+    async function apiCall(url, options = {}) {
+      try {
+        showStatus("Processing request...", "");
+        const response = await fetch(url, options);
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || `HTTP Error: ${response.status}`);
+        }
+
+        const text = await response.text();
+        if (!text) return null;
+        return JSON.parse(text);
+      } catch (error) {
+        showStatus("Request failed: " + error.message, "error");
+        openResultTab("Request Failed", { error: error.message });
+        throw error;
+      }
+    }
+
+    function showStatus(message, className) {
+      const status = document.getElementById("status");
+      status.className = "status-panel " + (className || "");
+      status.textContent = message;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function formatLabel(key) {
+      return key
+        .replace(/([A-Z])/g, " $1")
+        .replace(/_/g, " ")
+        .replace(/^./, ch => ch.toUpperCase());
+    }
+
+    function valueHtml(value) {
+      if (value === null || value === undefined || value === "") return "-";
+      if (typeof value === "object") return escapeHtml(JSON.stringify(value));
+      return escapeHtml(value);
+    }
+
+    function openResultTab(title, data) {
+      const resultTab = window.open("about:blank", "_blank");
+
+      if (!resultTab) {
+        alert("New tab blocked. Please allow popups/tabs for this page.");
+        return;
+      }
+
+      const rows = data === null || data === undefined
+        ? [{ message: "Operation completed successfully" }]
+        : Array.isArray(data)
+          ? data
+          : [data];
+
+      let tableHtml = "";
+
+      if (rows.length === 0) {
+        tableHtml = `<div class="empty">No records found.</div>`;
+      } else {
+        const columns = [...new Set(rows.flatMap(row => Object.keys(row || {})))];
+        const thead = columns.map(col => `<th>${escapeHtml(formatLabel(col))}</th>`).join("");
+        const tbody = rows.map((row, index) => {
+          const cells = columns.map(col => `<td>${valueHtml(row[col])}</td>`).join("");
+          return `<tr><td class="serial">${index + 1}</td>${cells}</tr>`;
+        }).join("");
+
+        tableHtml = `
+          <div class="table-card">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>S.No</th>
+                    ${thead}
+                  </tr>
+                </thead>
+                <tbody>${tbody}</tbody>
+              </table>
+            </div>
+          </div>
+        `;
+      }
+
+      resultTab.document.open();
+      resultTab.document.write(`
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <title>${escapeHtml(title)}</title>
+          <style>
+            *{box-sizing:border-box;margin:0;padding:0;font-family:Inter,Segoe UI,Arial,sans-serif}
+            body{min-height:100vh;background:linear-gradient(135deg,#e0f7ff,#bae6fd,#dbeafe);color:#0f172a}
+            .header{color:#075985;padding:38px 28px 60px;text-align:center}
+            .header h1{font-size:38px;margin-bottom:10px}
+            .header p{color:#0369a1;font-size:17px}
+            .summary{width:min(1150px,calc(100% - 32px));margin:-30px auto 24px;background:white;border-radius:24px;padding:22px 24px;box-shadow:0 18px 45px rgba(14,165,233,.15);display:flex;justify-content:space-between;align-items:center;gap:16px}
+            .summary h2{font-size:23px;color:#0369a1}
+            .count{background:#e0f2fe;color:#0284c7;padding:10px 15px;border-radius:999px;font-weight:950;white-space:nowrap}
+            .content{width:min(1150px,calc(100% - 32px));margin:0 auto 38px}
+            .table-card,.empty{background:white;border:1px solid #cbd5e1;border-radius:24px;box-shadow:0 16px 35px rgba(14,165,233,.12);overflow:hidden}
+            .empty{padding:30px;font-weight:900;color:#64748b}
+            .table-wrap{overflow-x:auto}
+            table{width:100%;border-collapse:collapse;min-width:760px}
+            th{background:#e0f2fe;color:#0369a1;padding:15px 16px;font-size:14px;text-align:left;border-bottom:1px solid #bae6fd;white-space:nowrap}
+            td{padding:15px 16px;border-bottom:1px solid #e2e8f0;font-size:15px;color:#0f172a;font-weight:750;vertical-align:top}
+            tr:hover td{background:#f0f9ff}
+            .serial{color:#0284c7;font-weight:950}
+            .actions{width:min(1150px,calc(100% - 32px));margin:0 auto 35px;display:flex;gap:12px}
+            button{border:none;border-radius:14px;padding:13px 18px;font-weight:950;cursor:pointer;color:white;background:#0284c7}
+            button.close{background:#0f172a}
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>${escapeHtml(title)}</h1>
+            <p>CharanPe Application Result</p>
+          </div>
+          <div class="summary">
+            <h2>Result Table</h2>
+            <div class="count">${rows.length} record(s)</div>
+          </div>
+          <main class="content">${tableHtml}</main>
+          <div class="actions">
+            <button onclick="window.print()">Print Result</button>
+            <button class="close" onclick="window.close()">Close Tab</button>
+          </div>
+        </body>
+        </html>
+      `);
+      resultTab.document.close();
+    }
+
+    async function loginUser() {
+      const phno = document.getElementById("loginPhno").value;
+      if (!phno) return showStatus("Please enter phone number.", "error");
+
+      await apiCall(`${BASE_URL}/login?phno=${phno}`, { method: "POST" });
+      showStatus("Login completed successfully. Result opened in new tab.", "success");
+      openResultTab("Login User", { message: "Login completed successfully", phoneNumber: phno });
+    }
+
+    async function getProfile() {
+      const data = await apiCall(`${BASE_URL}/profile`);
+      showStatus("Profile loaded successfully. Result opened in new tab.", "success");
+      openResultTab("User Profile", data);
+    }
+
+    async function sendMoney() {
+      const phno = document.getElementById("sendPhno").value;
+      const amount = document.getElementById("sendAmount").value;
+
+      if (!phno || !amount) return showStatus("Please enter receiver phone number and amount.", "error");
+
+      const data = await apiCall(`${BASE_URL}/sendmoney?phno=${phno}&amount=${amount}`, { method: "PUT" });
+      showStatus("Money sent successfully. Result opened in new tab.", "success");
+      openResultTab("Send Money", data);
+    }
+
+    async function makePayment() {
+      const amount = document.getElementById("paymentAmount").value;
+      if (!amount) return showStatus("Please enter payment amount.", "error");
+
+      const data = await apiCall(`${BASE_URL}/makepayment?amount=${amount}`, { method: "PUT" });
+      showStatus("Payment completed successfully. Result opened in new tab.", "success");
+      openResultTab("Make Payment", data);
+    }
+
+    async function checkBalance() {
+      const data = await apiCall(`${BASE_URL}/checkBalance`);
+      showStatus("Balance fetched successfully. Result opened in new tab.", "success");
+      openResultTab("Check Balance", { availableBalance: data });
+    }
+
+    async function getAllUsers() {
+      const data = await apiCall(`${BASE_URL}/all`);
+      showStatus("Users loaded successfully. Result opened in new tab.", "success");
+      openResultTab("All Users", data);
+    }
+
+    async function getAllTransactions() {
+      const data = await apiCall(`${BASE_URL}/transactions`);
+      showStatus("Transactions loaded successfully. Result opened in new tab.", "success");
+      openResultTab("All Transactions", data);
+    }
+
+    async function getTransactionsByPhno() {
+      const phno = document.getElementById("searchPhno").value;
+      if (!phno) return showStatus("Please enter phone number.", "error");
+
+      const data = await apiCall(`${BASE_URL}/transactionByphno?phno=${phno}`);
+      showStatus("Transactions by phone loaded successfully. Result opened in new tab.", "success");
+      openResultTab("Transactions By Phone", data);
+    }
+
+    async function getTransactionById() {
+      const transactionId = document.getElementById("transactionId").value;
+      if (!transactionId) return showStatus("Please enter transaction ID.", "error");
+
+      const data = await apiCall(`${BASE_URL}/transactionbyacno?transactionId=${transactionId}`);
+      showStatus("Transaction loaded successfully. Result opened in new tab.", "success");
+      openResultTab("Transaction By ID", data);
+    }
+</script>
+
+</body>
+</html>
