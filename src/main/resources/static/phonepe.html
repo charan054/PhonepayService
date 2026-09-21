@@ -225,7 +225,7 @@
                 <h2>Profile</h2>
                 <span class="method">GET</span>
             </div>
-            <p>View currently logged-in CharanPe user profile details.</p>
+            <p>View your own CharanPe bank profile details.</p>
             <button onclick="getProfile()">View Profile</button>
         </div>
 
@@ -235,29 +235,29 @@
                 <h2>Login User</h2>
                 <span class="method">POST</span>
             </div>
-            <p>Authenticate user using registered phone number.</p>
+            <p>Login with your registered phone number. Your login is private to this browser tab.</p>
             <input type="number" id="loginPhno" placeholder="Enter phone number">
             <button class="purple" onclick="loginUser()">Login User</button>
         </div>
 
         <div class="card">
             <div class="card-title">
-                <div class="icon">👥</div>
-                <h2>All Users</h2>
-                <span class="method">GET</span>
+                <div class="icon">🚪</div>
+                <h2>Logout</h2>
+                <span class="method">POST</span>
             </div>
-            <p>Display all registered CharanPe users in a separate result page.</p>
-            <button onclick="getAllUsers()">View Users</button>
+            <p>End your login. Do this when you finish, especially on a shared computer.</p>
+            <button class="purple" onclick="logoutUser()">Logout</button>
         </div>
 
         <div class="card">
             <div class="card-title">
                 <div class="icon">🧾</div>
                 <h2>Make Payment</h2>
-                <span class="method">PUT</span>
+                <span class="method">POST</span>
             </div>
             <p>Perform merchant payments instantly.</p>
-            <input type="number" id="paymentAmount" placeholder="Payment amount">
+            <input type="number" id="paymentAmount" placeholder="Payment amount" min="0.01" step="0.01">
             <button class="green" onclick="makePayment()">Make Payment</button>
         </div>
 
@@ -265,11 +265,11 @@
             <div class="card-title">
                 <div class="icon">💸</div>
                 <h2>Send Money</h2>
-                <span class="method">PUT</span>
+                <span class="method">POST</span>
             </div>
-            <p>Transfer money securely to another CharanPe user.</p>
+            <p>Transfer money securely to another CharanPe bank.</p>
             <input type="number" id="sendPhno" placeholder="Receiver phone number">
-            <input type="number" id="sendAmount" placeholder="Enter amount">
+            <input type="number" id="sendAmount" placeholder="Enter amount" min="0.01" step="0.01">
             <button class="green" onclick="sendMoney()">Send Money</button>
         </div>
 
@@ -279,29 +279,18 @@
                 <h2>Check Balance</h2>
                 <span class="method">GET</span>
             </div>
-            <p>Check available balance for the currently logged-in user.</p>
+            <p>Check your available balance.</p>
             <button onclick="checkBalance()">Check Balance</button>
         </div>
 
         <div class="card">
             <div class="card-title">
                 <div class="icon">📄</div>
-                <h2>Transactions</h2>
+                <h2>My Transactions</h2>
                 <span class="method">GET</span>
             </div>
-            <p>View complete transaction history.</p>
-            <button onclick="getAllTransactions()">View Transactions</button>
-        </div>
-
-        <div class="card">
-            <div class="card-title">
-                <div class="icon">📞</div>
-                <h2>Transactions By Phone</h2>
-                <span class="method">GET</span>
-            </div>
-            <p>Search transactions using customer phone number.</p>
-            <input type="number" id="searchPhno" placeholder="Enter phone number">
-            <button onclick="getTransactionsByPhno()">Search By Phone</button>
+            <p>View the payments you sent and the money you received, newest first.</p>
+            <button onclick="getMyTransactions()">View Transactions</button>
         </div>
 
         <div class="card">
@@ -310,7 +299,7 @@
                 <h2>Transaction By ID</h2>
                 <span class="method">GET</span>
             </div>
-            <p>Find transaction details using transaction id.</p>
+            <p>Find one of your transactions using its transaction id.</p>
             <input type="number" id="transactionId" placeholder="Enter transaction ID">
             <button onclick="getTransactionById()">Search By ID</button>
         </div>
@@ -323,13 +312,38 @@
 </main>
 
 <script>
-    const BASE_URL = "http://localhost:8081/phonepe";
+    // Relative on purpose: the page always talks to the server it was loaded from (open it at http://localhost:8081/phonepe.html)
+    const BASE_URL = "/phonepe";
+
+    // The login token lives only in this browser tab (sessionStorage), so two people on two tabs stay two people.
+    let sessionToken = readStoredToken();
+
+    function readStoredToken() {
+      try { return sessionStorage.getItem("phonepeToken"); } catch (e) { return null; }
+    }
+
+    function storeToken(token) {
+      sessionToken = token;
+      try {
+        if (token) sessionStorage.setItem("phonepeToken", token);
+        else sessionStorage.removeItem("phonepeToken");
+      } catch (e) { /* storage blocked: the login simply lasts until the page is reloaded */ }
+    }
+
+    function jsonRequest(method, body) {
+      return { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+    }
 
     async function apiCall(url, options = {}) {
       try {
         showStatus("Processing request...", "");
-        const response = await fetch(url, options);
+        const headers = { ...(options.headers || {}) };
+        if (sessionToken) headers["Authorization"] = "Bearer " + sessionToken;
+        const response = await fetch(url, { ...options, headers });
 
+        if (response.status === 401 && sessionToken) {
+          storeToken(null);   // the login expired or was ended: ask the person to log in again
+        }
         if (!response.ok) {
           const errorText = await response.text();
           throw new Error(errorText || `HTTP Error: ${response.status}`);
@@ -467,73 +481,83 @@
       resultTab.document.close();
     }
 
+    function requireLogin() {
+      if (sessionToken) return true;
+      showStatus("Please login first.", "error");
+      return false;
+    }
+
     async function loginUser() {
       const phno = document.getElementById("loginPhno").value;
       if (!phno) return showStatus("Please enter phone number.", "error");
 
-      await apiCall(`${BASE_URL}/login?phno=${phno}`, { method: "POST" });
-      showStatus("Login completed successfully. Result opened in new tab.", "success");
-      openResultTab("Login User", { message: "Login completed successfully", phoneNumber: phno });
+      const data = await apiCall(`${BASE_URL}/login`, jsonRequest("POST", { phno: Number(phno) }));
+      storeToken(data.token);
+      showStatus(`Logged in as ${data.name}. Result opened in new tab.`, "success");
+      // the token itself is never shown or printed
+      openResultTab("Login User", { message: "Login completed successfully", name: data.name, phoneNumber: data.phno, sessionExpiresAt: data.expiresAt });
+    }
+
+    async function logoutUser() {
+      if (!requireLogin()) return;
+
+      await apiCall(`${BASE_URL}/logout`, { method: "POST" });
+      storeToken(null);
+      showStatus("Logged out.", "success");
     }
 
     async function getProfile() {
+      if (!requireLogin()) return;
+
       const data = await apiCall(`${BASE_URL}/profile`);
       showStatus("Profile loaded successfully. Result opened in new tab.", "success");
       openResultTab("User Profile", data);
     }
 
     async function sendMoney() {
+      if (!requireLogin()) return;
       const phno = document.getElementById("sendPhno").value;
       const amount = document.getElementById("sendAmount").value;
 
       if (!phno || !amount) return showStatus("Please enter receiver phone number and amount.", "error");
 
-      const data = await apiCall(`${BASE_URL}/sendmoney?phno=${phno}&amount=${amount}`, { method: "PUT" });
+      const data = await apiCall(`${BASE_URL}/sendmoney`, jsonRequest("POST", { receiverPhno: Number(phno), amount: Number(amount) }));
       showStatus("Money sent successfully. Result opened in new tab.", "success");
       openResultTab("Send Money", data);
     }
 
     async function makePayment() {
+      if (!requireLogin()) return;
       const amount = document.getElementById("paymentAmount").value;
       if (!amount) return showStatus("Please enter payment amount.", "error");
 
-      const data = await apiCall(`${BASE_URL}/makepayment?amount=${amount}`, { method: "PUT" });
+      const data = await apiCall(`${BASE_URL}/makepayment`, jsonRequest("POST", { amount: Number(amount) }));
       showStatus("Payment completed successfully. Result opened in new tab.", "success");
       openResultTab("Make Payment", data);
     }
 
     async function checkBalance() {
-      const data = await apiCall(`${BASE_URL}/checkBalance`);
+      if (!requireLogin()) return;
+
+      const data = await apiCall(`${BASE_URL}/balance`);
       showStatus("Balance fetched successfully. Result opened in new tab.", "success");
-      openResultTab("Check Balance", { availableBalance: data });
+      openResultTab("Check Balance", { availableBalance: data.balance });
     }
 
-    async function getAllUsers() {
-      const data = await apiCall(`${BASE_URL}/all`);
-      showStatus("Users loaded successfully. Result opened in new tab.", "success");
-      openResultTab("All Users", data);
-    }
+    async function getMyTransactions() {
+      if (!requireLogin()) return;
 
-    async function getAllTransactions() {
       const data = await apiCall(`${BASE_URL}/transactions`);
       showStatus("Transactions loaded successfully. Result opened in new tab.", "success");
-      openResultTab("All Transactions", data);
-    }
-
-    async function getTransactionsByPhno() {
-      const phno = document.getElementById("searchPhno").value;
-      if (!phno) return showStatus("Please enter phone number.", "error");
-
-      const data = await apiCall(`${BASE_URL}/transactionByphno?phno=${phno}`);
-      showStatus("Transactions by phone loaded successfully. Result opened in new tab.", "success");
-      openResultTab("Transactions By Phone", data);
+      openResultTab("My Transactions", data);
     }
 
     async function getTransactionById() {
+      if (!requireLogin()) return;
       const transactionId = document.getElementById("transactionId").value;
       if (!transactionId) return showStatus("Please enter transaction ID.", "error");
 
-      const data = await apiCall(`${BASE_URL}/transactionbyacno?transactionId=${transactionId}`);
+      const data = await apiCall(`${BASE_URL}/transactions/${encodeURIComponent(transactionId)}`);
       showStatus("Transaction loaded successfully. Result opened in new tab.", "success");
       openResultTab("Transaction By ID", data);
     }
