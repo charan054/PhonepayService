@@ -177,7 +177,7 @@ class PhonepeServiceTest {
     void sendMoney_movesTheMoneyInOneAtomicCall_andRecordsIt() {
         when(transactions.findMaxTransactionId()).thenReturn(null);
 
-        Transaction t = service.sendMoney(PAYER, RECEIVER, new BigDecimal("250"));
+        Transaction t = service.sendMoney(PAYER, RECEIVER, new BigDecimal("250"), null);
 
         InOrder order = inOrder(bank, transactions);
         order.verify(transactions).saveAndFlush(any(Transaction.class));                // 1. write it down as PENDING
@@ -193,13 +193,38 @@ class PhonepeServiceTest {
     }
 
     @Test
+    void sendMoney_storesTheNote() {
+        when(transactions.findMaxTransactionId()).thenReturn(null);
+
+        Transaction t = service.sendMoney(PAYER, RECEIVER, AMOUNT, "rent");
+
+        assertEquals("rent", t.getNote());
+    }
+
+    @Test
+    void sendMoney_blankNote_isStoredAsNull() {
+        when(transactions.findMaxTransactionId()).thenReturn(null);
+
+        assertEquals(null, service.sendMoney(PAYER, RECEIVER, AMOUNT, "").getNote());
+        assertEquals(null, service.sendMoney(PAYER, RECEIVER, AMOUNT, "   ").getNote());
+        assertEquals(null, service.sendMoney(PAYER, RECEIVER, AMOUNT, null).getNote());
+    }
+
+    @Test
+    void sendMoney_noteIsTrimmed() {
+        when(transactions.findMaxTransactionId()).thenReturn(null);
+
+        assertEquals("rent", service.sendMoney(PAYER, RECEIVER, AMOUNT, "  rent  ").getNote());
+    }
+
+    @Test
     void sendMoney_firstTransactionGets100000_thenOneMoreThanTheHighest() {
         when(transactions.findMaxTransactionId()).thenReturn(null);
-        assertEquals(100000L, service.sendMoney(PAYER, RECEIVER, AMOUNT).getTransactionId());
+        assertEquals(100000L, service.sendMoney(PAYER, RECEIVER, AMOUNT, null).getTransactionId());
         verify(bank).transfer(PAYER, RECEIVER, AMOUNT, "phonepe-100000");
 
         when(transactions.findMaxTransactionId()).thenReturn(100007L);
-        assertEquals(100008L, service.sendMoney(PAYER, RECEIVER, AMOUNT).getTransactionId());
+        assertEquals(100008L, service.sendMoney(PAYER, RECEIVER, AMOUNT, null).getTransactionId());
         verify(bank).transfer(PAYER, RECEIVER, AMOUNT, "phonepe-100008");
     }
 
@@ -211,14 +236,14 @@ class PhonepeServiceTest {
         when(transactions.findMaxTransactionId()).thenReturn(null);
         doThrow(new UserNotExistException("User not found")).when(bank).transfer(eq(PAYER), eq(RECEIVER), any(), any());
 
-        assertThrows(UserNotExistException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT));
+        assertThrows(UserNotExistException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT, null));
 
         assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.FAILED), writes);
     }
 
     @Test
     void sendMoney_toYourself_isRejected() {
-        InvalidRequestException ex = assertThrows(InvalidRequestException.class, () -> service.sendMoney(PAYER, PAYER, AMOUNT));
+        InvalidRequestException ex = assertThrows(InvalidRequestException.class, () -> service.sendMoney(PAYER, PAYER, AMOUNT, null));
 
         assertEquals("You cannot send money to yourself", ex.getMessage());
         verifyNoInteractions(bank, transactions);
@@ -227,7 +252,7 @@ class PhonepeServiceTest {
     @ParameterizedTest
     @ValueSource(longs = {123, 5876543210L, 98765432101L})
     void sendMoney_invalidReceiverNumber_isRejected(long badReceiver) {
-        assertThrows(InvalidRequestException.class, () -> service.sendMoney(PAYER, badReceiver, AMOUNT));
+        assertThrows(InvalidRequestException.class, () -> service.sendMoney(PAYER, badReceiver, AMOUNT, null));
 
         verifyNoInteractions(bank, transactions);
     }
@@ -236,7 +261,7 @@ class PhonepeServiceTest {
     @ValueSource(strings = {"0", "-1", "-0.01", "0.00"})
     void sendMoney_zeroOrNegativeAmount_isRejected(String amount) {
         InvalidRequestException ex = assertThrows(InvalidRequestException.class,
-                () -> service.sendMoney(PAYER, RECEIVER, new BigDecimal(amount)));
+                () -> service.sendMoney(PAYER, RECEIVER, new BigDecimal(amount), null));
 
         assertEquals("Amount too low", ex.getMessage());
         verifyNoInteractions(bank, transactions);
@@ -245,7 +270,7 @@ class PhonepeServiceTest {
     @Test
     void sendMoney_moreThanTwoDecimals_isRejected() {
         InvalidRequestException ex = assertThrows(InvalidRequestException.class,
-                () -> service.sendMoney(PAYER, RECEIVER, new BigDecimal("1.234")));
+                () -> service.sendMoney(PAYER, RECEIVER, new BigDecimal("1.234"), null));
 
         assertEquals("Amount can have at most 2 decimal places", ex.getMessage());
         verifyNoInteractions(bank, transactions);
@@ -253,7 +278,7 @@ class PhonepeServiceTest {
 
     @Test
     void sendMoney_missingAmount_isRejected() {
-        assertThrows(InvalidRequestException.class, () -> service.sendMoney(PAYER, RECEIVER, null));
+        assertThrows(InvalidRequestException.class, () -> service.sendMoney(PAYER, RECEIVER, null, null));
 
         verifyNoInteractions(bank, transactions);
     }
@@ -265,7 +290,7 @@ class PhonepeServiceTest {
         when(transactions.findMaxTransactionId()).thenReturn(null);
         doThrow(new BalanceException("Insufficient Funds")).when(bank).transfer(eq(PAYER), eq(RECEIVER), any(), any());
 
-        BalanceException ex = assertThrows(BalanceException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT));
+        BalanceException ex = assertThrows(BalanceException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT, null));
 
         assertEquals("Insufficient Funds", ex.getMessage());
         assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.FAILED), writes);
@@ -276,7 +301,7 @@ class PhonepeServiceTest {
         when(transactions.findMaxTransactionId()).thenReturn(null);
         doThrow(new BankUnavailableException("down", null)).when(bank).transfer(eq(PAYER), eq(RECEIVER), any(), any());
 
-        assertThrows(BankUnavailableException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT));
+        assertThrows(BankUnavailableException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT, null));
 
         assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.FAILED), writes);
     }
@@ -289,7 +314,7 @@ class PhonepeServiceTest {
         doThrow(new BankOutcomeUnknownException("timeout", null)).doNothing()
                 .when(bank).transfer(eq(PAYER), eq(RECEIVER), any(), any());
 
-        Transaction t = service.sendMoney(PAYER, RECEIVER, AMOUNT);
+        Transaction t = service.sendMoney(PAYER, RECEIVER, AMOUNT, null);
 
         verify(bank, times(2)).transfer(PAYER, RECEIVER, AMOUNT, "phonepe-100000");   // same key both times
         assertEquals(TransactionStatus.COMPLETED, t.getStatus());
@@ -302,7 +327,7 @@ class PhonepeServiceTest {
         when(transactions.findMaxTransactionId()).thenReturn(null);
         doThrow(new BankOutcomeUnknownException("timeout", null)).when(bank).transfer(eq(PAYER), eq(RECEIVER), any(), any());
 
-        TransferFailedException ex = assertThrows(TransferFailedException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT));
+        TransferFailedException ex = assertThrows(TransferFailedException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT, null));
 
         assertTrue(ex.getMessage().contains("could not confirm"), ex.getMessage());
         assertTrue(ex.getMessage().contains("100000"), "the user needs the reference number: " + ex.getMessage());
@@ -320,7 +345,7 @@ class PhonepeServiceTest {
         doThrow(new BankConflictException("busy")).doThrow(new BankConflictException("busy")).doNothing()
                 .when(bank).transfer(eq(PAYER), eq(RECEIVER), any(), any());
 
-        Transaction t = service.sendMoney(PAYER, RECEIVER, AMOUNT);
+        Transaction t = service.sendMoney(PAYER, RECEIVER, AMOUNT, null);
 
         verify(bank, times(3)).transfer(PAYER, RECEIVER, AMOUNT, "phonepe-100000");
         assertEquals(TransactionStatus.COMPLETED, t.getStatus());
@@ -333,7 +358,7 @@ class PhonepeServiceTest {
         when(transactions.findMaxTransactionId()).thenReturn(null);
         doThrow(new BankConflictException("busy")).when(bank).transfer(eq(PAYER), eq(RECEIVER), any(), any());
 
-        TransferFailedException ex = assertThrows(TransferFailedException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT));
+        TransferFailedException ex = assertThrows(TransferFailedException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT, null));
 
         assertEquals("The bank was too busy to complete your transfer. Please try again.", ex.getMessage());
         verify(bank, times(3)).transfer(PAYER, RECEIVER, AMOUNT, "phonepe-100000");
@@ -347,7 +372,7 @@ class PhonepeServiceTest {
         doThrow(new DataIntegrityViolationException("dup")).when(transactions).saveAndFlush(any(Transaction.class));
         when(transactions.findMaxTransactionId()).thenReturn(100000L);
 
-        assertThrows(DataIntegrityViolationException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT));
+        assertThrows(DataIntegrityViolationException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT, null));
 
         verify(transactions, times(5)).saveAndFlush(any(Transaction.class));   // gave up after 5 attempts
         verify(bank, never()).transfer(any(Long.class), any(Long.class), any(), any());
@@ -361,7 +386,7 @@ class PhonepeServiceTest {
                 .when(transactions).saveAndFlush(any(Transaction.class));
         when(transactions.findMaxTransactionId()).thenReturn(100005L, 100006L);
 
-        Transaction t = service.sendMoney(PAYER, RECEIVER, AMOUNT);
+        Transaction t = service.sendMoney(PAYER, RECEIVER, AMOUNT, null);
 
         assertEquals(100007L, t.getTransactionId());
         assertEquals(TransactionStatus.COMPLETED, t.getStatus());
@@ -374,7 +399,7 @@ class PhonepeServiceTest {
         when(transactions.findMaxTransactionId()).thenReturn(null);
         doThrow(new RuntimeException("db down")).when(transactions).save(any(Transaction.class));
 
-        Transaction t = service.sendMoney(PAYER, RECEIVER, AMOUNT);
+        Transaction t = service.sendMoney(PAYER, RECEIVER, AMOUNT, null);
 
         assertEquals(TransactionStatus.COMPLETED, t.getStatus());
         verify(bank).transfer(PAYER, RECEIVER, AMOUNT, "phonepe-100000");
@@ -384,7 +409,7 @@ class PhonepeServiceTest {
 
     @Test
     void makePayment_takesTheMoneyAndRecordsAPaymentWithNoReceiver() {
-        Transaction t = service.makePayment(PAYER, new BigDecimal("99.5"));
+        Transaction t = service.makePayment(PAYER, new BigDecimal("99.5"), null);
 
         verify(bank).withdraw(PAYER, new BigDecimal("99.50"));
         verify(bank, never()).deposit(any(Long.class), any());
@@ -395,10 +420,17 @@ class PhonepeServiceTest {
     }
 
     @Test
+    void makePayment_storesTheNote_trimmedAndBlankAsNull() {
+        assertEquals("movie tickets", service.makePayment(PAYER, AMOUNT, "  movie tickets  ").getNote());
+        assertEquals(null, service.makePayment(PAYER, AMOUNT, "").getNote());
+        assertEquals(null, service.makePayment(PAYER, AMOUNT, null).getNote());
+    }
+
+    @Test
     void makePayment_insufficientFunds_isRecordedAsFailed() {
         doThrow(new BalanceException("Insufficient Funds")).when(bank).withdraw(eq(PAYER), any());
 
-        assertThrows(BalanceException.class, () -> service.makePayment(PAYER, AMOUNT));
+        assertThrows(BalanceException.class, () -> service.makePayment(PAYER, AMOUNT, null));
 
         assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.FAILED), writes);
     }
@@ -407,7 +439,7 @@ class PhonepeServiceTest {
     void makePayment_outcomeUnknown_needsAPerson() {
         doThrow(new BankOutcomeUnknownException("timeout", null)).when(bank).withdraw(eq(PAYER), any());
 
-        assertThrows(TransferFailedException.class, () -> service.makePayment(PAYER, AMOUNT));
+        assertThrows(TransferFailedException.class, () -> service.makePayment(PAYER, AMOUNT, null));
 
         assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.NEEDS_RECONCILIATION), writes);
     }
@@ -415,7 +447,7 @@ class PhonepeServiceTest {
     @ParameterizedTest
     @ValueSource(strings = {"0", "-5", "2.345"})
     void makePayment_badAmount_isRejected(String amount) {
-        assertThrows(InvalidRequestException.class, () -> service.makePayment(PAYER, new BigDecimal(amount)));
+        assertThrows(InvalidRequestException.class, () -> service.makePayment(PAYER, new BigDecimal(amount), null));
 
         verifyNoInteractions(bank, transactions);
     }

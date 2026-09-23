@@ -80,7 +80,7 @@ public class PhonepeService {
 
     // ---------- payments ----------
 
-    public Transaction sendMoney(long payer, long receiver, BigDecimal amount) {
+    public Transaction sendMoney(long payer, long receiver, BigDecimal amount, String note) {
         requireValidPhone(receiver);
         BigDecimal value = requireValidAmount(amount);
         if (payer == receiver) {
@@ -90,14 +90,14 @@ public class PhonepeService {
         // No pre-flight check on the receiver here: the bank's transfer is atomic, so if the receiver does not
         // exist the whole call fails with nothing moved - a separate lookup first would only add a network
         // round trip without adding any safety.
-        Transaction t = record(payer, receiver, value, "Transfer");
+        Transaction t = record(payer, receiver, value, "Transfer", note);
         transfer(t, payer, receiver, value);
         return settle(t, TransactionStatus.COMPLETED, null);
     }
 
-    public Transaction makePayment(long payer, BigDecimal amount) {
+    public Transaction makePayment(long payer, BigDecimal amount, String note) {
         BigDecimal value = requireValidAmount(amount);
-        Transaction t = record(payer, null, value, "Payment");
+        Transaction t = record(payer, null, value, "Payment", note);
         debit(t, payer, value);
         return settle(t, TransactionStatus.COMPLETED, null);
     }
@@ -177,7 +177,7 @@ public class PhonepeService {
 
     // ---------- bookkeeping ----------
 
-    private Transaction record(long payer, Long receiver, BigDecimal amount, String mode) {
+    private Transaction record(long payer, Long receiver, BigDecimal amount, String mode, String note) {
         for (int attempt = 1; ; attempt++) {
             Transaction t = new Transaction();
             t.setTransactionId(nextTransactionId());
@@ -187,6 +187,7 @@ public class PhonepeService {
             t.setMode(mode);
             t.setStatus(TransactionStatus.PENDING);
             t.setCreatedAt(clock.instant());
+            t.setNote(note == null || note.isBlank() ? null : note.trim());
             try {
                 return transactions.saveAndFlush(t);
             } catch (DataIntegrityViolationException e) {
