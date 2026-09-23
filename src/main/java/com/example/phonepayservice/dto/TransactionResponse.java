@@ -10,7 +10,7 @@ import java.time.Instant;
  * or gave money to them (CREDIT). Internal details such as failure reasons are never exposed.
  */
 public record TransactionResponse(long transactionId, String mode, String direction, long payerPhno,
-                                  Long receiverPhno, BigDecimal amount, String status, Instant createdAt) {
+                                  Long receiverPhno, BigDecimal amount, String status, Instant createdAt, String note) {
 
     public static TransactionResponse from(Transaction t, long viewer) {
         Long receiver = t.getReceiverPhno() == null || t.getReceiverPhno() == 0 ? null : t.getReceiverPhno();
@@ -22,6 +22,7 @@ public record TransactionResponse(long transactionId, String mode, String direct
                 receiver,
                 t.getAmount(),
                 t.getStatus() == null ? "COMPLETED" : t.getStatus().name(),   // rows from before statuses existed
-                t.getCreatedAt());
+                t.getCreatedAt(),
+                t.getNote());
     }
 }

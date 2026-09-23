@@ -60,13 +60,13 @@ public class PhonepeController {
     @PostMapping("/sendmoney")
     public TransactionResponse sendMoney(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
                                          @Valid @RequestBody SendMoneyRequest request) {
-        return TransactionResponse.from(phonepeService.sendMoney(caller, request.receiverPhno(), request.amount()), caller);
+        return TransactionResponse.from(phonepeService.sendMoney(caller, request.receiverPhno(), request.amount(), request.note()), caller);
     }
 
     @PostMapping("/makepayment")
     public TransactionResponse makePayment(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
                                            @Valid @RequestBody PaymentRequest request) {
-        return TransactionResponse.from(phonepeService.makePayment(caller, request.amount()), caller);
+        return TransactionResponse.from(phonepeService.makePayment(caller, request.amount(), request.note()), caller);
     }
 
     @GetMapping("/transactions")
