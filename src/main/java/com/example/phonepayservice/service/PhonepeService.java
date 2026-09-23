@@ -25,6 +25,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 
 /**
@@ -104,9 +105,12 @@ public class PhonepeService {
 
     // ---------- history ----------
 
-    /** Everything this person paid, plus completed payments they received. Newest first. */
-    public PageResponse<Transaction> transactionsOf(long viewer, int page, int size) {
-        return PageResponse.of(transactions.findVisibleTo(viewer, pageable(page, size)));
+    /** Everything this person paid, plus completed payments they received. Newest first. from/to are optional. */
+    public PageResponse<Transaction> transactionsOf(long viewer, int page, int size, Instant from, Instant to) {
+        if (from != null && to != null && from.isAfter(to)) {
+            throw new InvalidRequestException("'from' must not be after 'to'.");
+        }
+        return PageResponse.of(transactions.findVisibleTo(viewer, from, to, pageable(page, size)));
     }
 
     // page/size come straight from a query parameter, so out-of-range values are a caller mistake, not a crash.
