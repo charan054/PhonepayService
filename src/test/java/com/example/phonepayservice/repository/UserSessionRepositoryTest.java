@@ -105,4 +105,20 @@ class UserSessionRepositoryTest {
         assertTrue(repository.findByTokenHash("asha-live").isPresent());
         assertTrue(repository.findByTokenHash("ravi-old").isPresent());
     }
+
+    @Test
+    void deleteByExpiresAtBefore_removesEveryExpiredSession_regardlessOfWhoOwnsIt() {
+        repository.save(session("asha-old", ASHA, NOW.minusSeconds(1)));        // expired
+        repository.save(session("asha-live", ASHA, NOW.plusSeconds(1800)));     // still valid
+        repository.save(session("ravi-old", RAVI, NOW.minusSeconds(1)));        // expired, different owner
+        flushAndClear();
+
+        long removed = repository.deleteByExpiresAtBefore(NOW);
+        flushAndClear();
+
+        assertEquals(2, removed);
+        assertTrue(repository.findByTokenHash("asha-old").isEmpty());
+        assertTrue(repository.findByTokenHash("asha-live").isPresent());
+        assertTrue(repository.findByTokenHash("ravi-old").isEmpty());
+    }
 }
