@@ -480,9 +480,41 @@ class PhonepeIntegrationTest {
         mockMvc.perform(as(token, get("/phonepe/profile"))).andExpect(status().isOk());
         mockMvc.perform(as(token, get("/phonepe/transactions")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(3))
-                .andExpect(jsonPath("$[0].transactionId").value(100002))   // newest first
-                .andExpect(jsonPath("$[2].transactionId").value(100000));
+                .andExpect(jsonPath("$.content.length()").value(3))
+                .andExpect(jsonPath("$.content[0].transactionId").value(100002))   // newest first
+                .andExpect(jsonPath("$.content[2].transactionId").value(100000));
+    }
+
+    @Test
+    void transactions_arePaginated() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        transferSucceeds();
+        String token = login(ASHA);
+        for (String amount : List.of("10", "20", "30")) {
+            mockMvc.perform(send(token, RAVI, amount)).andExpect(status().isOk());
+        }
+
+        mockMvc.perform(as(token, get("/phonepe/transactions")).param("page", "0").param("size", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(2))
+                .andExpect(jsonPath("$.totalElements").value(3))
+                .andExpect(jsonPath("$.totalPages").value(2))
+                .andExpect(jsonPath("$.content[0].transactionId").value(100002));
+
+        mockMvc.perform(as(token, get("/phonepe/transactions")).param("page", "1").param("size", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].transactionId").value(100000));
+    }
+
+    @Test
+    void transactions_invalidPageOrSize_returns400() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        String token = login(ASHA);
+
+        mockMvc.perform(as(token, get("/phonepe/transactions")).param("page", "-1")).andExpect(status().isBadRequest());
+        mockMvc.perform(as(token, get("/phonepe/transactions")).param("size", "0")).andExpect(status().isBadRequest());
+        mockMvc.perform(as(token, get("/phonepe/transactions")).param("size", "1000")).andExpect(status().isBadRequest());
     }
 
     @Test
@@ -497,11 +529,11 @@ class PhonepeIntegrationTest {
         mockMvc.perform(send(ashaToken, RAVI, "250")).andExpect(status().isOk());
 
         mockMvc.perform(as(ashaToken, get("/phonepe/transactions")))
-                .andExpect(jsonPath("$.length()").value(1)).andExpect(jsonPath("$[0].direction").value("DEBIT"));
+                .andExpect(jsonPath("$.content.length()").value(1)).andExpect(jsonPath("$.content[0].direction").value("DEBIT"));
         mockMvc.perform(as(raviToken, get("/phonepe/transactions")))
-                .andExpect(jsonPath("$.length()").value(1)).andExpect(jsonPath("$[0].direction").value("CREDIT"));
+                .andExpect(jsonPath("$.content.length()").value(1)).andExpect(jsonPath("$.content[0].direction").value("CREDIT"));
         mockMvc.perform(as(meenaToken, get("/phonepe/transactions")))
-                .andExpect(jsonPath("$.length()").value(0));
+                .andExpect(jsonPath("$.content.length()").value(0));
 
         mockMvc.perform(as(ashaToken, get("/phonepe/transactions/100000"))).andExpect(status().isOk());
         mockMvc.perform(as(raviToken, get("/phonepe/transactions/100000"))).andExpect(status().isOk());
