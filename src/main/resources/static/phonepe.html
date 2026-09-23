@@ -17,6 +17,7 @@
           --border:#cbd5e1;
           --success:#16a34a;
           --danger:#dc2626;
+          --warning:#d97706;
           --shadow:0 18px 45px rgba(14,165,233,.15);
         }
 
@@ -197,6 +198,42 @@
         .success{color:var(--success)}
         .error{color:var(--danger)}
 
+        .session-bar{
+          display:inline-flex;
+          align-items:center;
+          gap:12px;
+          background:rgba(255,255,255,.75);
+          border:1px solid rgba(255,255,255,.9);
+          border-radius:999px;
+          padding:10px 18px;
+          margin-top:6px;
+          font-weight:800;
+          font-size:14px;
+          color:#075985;
+          box-shadow:var(--shadow);
+        }
+
+        .session-bar button{
+          width:auto;
+          padding:8px 16px;
+          font-size:13px;
+          background:#0284c7;
+          box-shadow:none;
+        }
+
+        .status-badge{
+          display:inline-block;
+          padding:4px 10px;
+          border-radius:999px;
+          font-size:12px;
+          font-weight:900;
+          white-space:nowrap;
+        }
+        .status-completed{background:#dcfce7;color:#15803d}
+        .status-failed{background:#fee2e2;color:#b91c1c}
+        .status-pending{background:#e2e8f0;color:#475569}
+        .status-needs_reconciliation{background:#fef3c7;color:#b45309}
+
         @media(max-width:1000px){
           .grid{grid-template-columns:repeat(2,1fr)}
         }
@@ -214,6 +251,12 @@
     <div class="hero-badge">💙 CharanPe Digital Payments</div>
     <h1>CharanPe Dashboard</h1>
     <p>Manage payments, transactions, balances, profile and transfers with a clean pastel skyblue UI.</p>
+    <div>
+        <div class="session-bar">
+            <span id="sessionStatus">Not logged in</span>
+            <button onclick="logoutUser()">Logout</button>
+        </div>
+    </div>
 </header>
 
 <main class="container">
@@ -317,17 +360,30 @@
 
     // The login token lives only in this browser tab (sessionStorage), so two people on two tabs stay two people.
     let sessionToken = readStoredToken();
+    let sessionName = readStoredName();
 
     function readStoredToken() {
       try { return sessionStorage.getItem("phonepeToken"); } catch (e) { return null; }
     }
 
-    function storeToken(token) {
+    function readStoredName() {
+      try { return sessionStorage.getItem("phonepeName"); } catch (e) { return null; }
+    }
+
+    // Keeps the top-of-page badge in sync with who (if anyone) is actually logged in, so it's always obvious
+    // which account is active - important once you've logged out and back in as someone else in the same tab.
+    function storeSession(token, name) {
       sessionToken = token;
+      sessionName = name;
       try {
-        if (token) sessionStorage.setItem("phonepeToken", token);
-        else sessionStorage.removeItem("phonepeToken");
+        if (token) { sessionStorage.setItem("phonepeToken", token); sessionStorage.setItem("phonepeName", name || ""); }
+        else { sessionStorage.removeItem("phonepeToken"); sessionStorage.removeItem("phonepeName"); }
       } catch (e) { /* storage blocked: the login simply lasts until the page is reloaded */ }
+      updateSessionBar();
+    }
+
+    function updateSessionBar() {
+      document.getElementById("sessionStatus").textContent = sessionToken ? `Logged in as ${sessionName}` : "Not logged in";
     }
 
     function jsonRequest(method, body) {
@@ -342,7 +398,7 @@
         const response = await fetch(url, { ...options, headers });
 
         if (response.status === 401 && sessionToken) {
-          storeToken(null);   // the login expired or was ended: ask the person to log in again
+          storeSession(null, null);   // the login expired or was ended: ask the person to log in again
         }
         if (!response.ok) {
           const errorText = await response.text();
@@ -387,6 +443,16 @@
       return escapeHtml(value);
     }
 
+    // COMPLETED/FAILED/PENDING/NEEDS_RECONCILIATION as a colored badge instead of plain text, so the state of a
+    // payment is visible at a glance rather than requiring you to read every row's text.
+    function cellHtml(column, value) {
+      if (column === "status" && typeof value === "string") {
+        const cssClass = "status-" + value.toLowerCase();
+        return `<span class="status-badge ${cssClass}">${escapeHtml(value)}</span>`;
+      }
+      return valueHtml(value);
+    }
+
     function openResultTab(title, data) {
       const resultTab = window.open("about:blank", "_blank");
 
@@ -409,7 +475,7 @@
         const columns = [...new Set(rows.flatMap(row => Object.keys(row || {})))];
         const thead = columns.map(col => `<th>${escapeHtml(formatLabel(col))}</th>`).join("");
         const tbody = rows.map((row, index) => {
-          const cells = columns.map(col => `<td>${valueHtml(row[col])}</td>`).join("");
+          const cells = columns.map(col => `<td>${cellHtml(col, row[col])}</td>`).join("");
           return `<tr><td class="serial">${index + 1}</td>${cells}</tr>`;
         }).join("");
 
@@ -492,7 +558,7 @@
       if (!phno) return showStatus("Please enter phone number.", "error");
 
       const data = await apiCall(`${BASE_URL}/login`, jsonRequest("POST", { phno: Number(phno) }));
-      storeToken(data.token);
+      storeSession(data.token, data.name);
       showStatus(`Logged in as ${data.name}. Result opened in new tab.`, "success");
       // the token itself is never shown or printed
       openResultTab("Login User", { message: "Login completed successfully", name: data.name, phoneNumber: data.phno, sessionExpiresAt: data.expiresAt });
@@ -502,7 +568,7 @@
       if (!requireLogin()) return;
 
       await apiCall(`${BASE_URL}/logout`, { method: "POST" });
-      storeToken(null);
+      storeSession(null, null);
       showStatus("Logged out.", "success");
     }
 
@@ -561,6 +627,8 @@
       showStatus("Transaction loaded successfully. Result opened in new tab.", "success");
       openResultTab("Transaction By ID", data);
     }
+
+    updateSessionBar();
 </script>
 
 </body>
