@@ -1,1 +1,1 @@
-org.springframework.boot.EnvironmentPostProcessor=com.example.phonepayservice.configuration.DbPasswordCheck
+org.springframework.boot.EnvironmentPostProcessor=com.example.phonepayservice.configuration.RequiredEnvironmentCheck
