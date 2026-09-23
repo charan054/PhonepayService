@@ -34,7 +34,7 @@ public class PhonepeService {
 
     static final long FIRST_TRANSACTION_ID = 100000;
     private static final int MAX_ID_ATTEMPTS = 5;
-    private static final int MAX_CREDIT_ATTEMPTS = 3;
+    private static final int MAX_TRANSFER_ATTEMPTS = 3;
 
     private final BankGateway bank;
     private final SessionService sessions;
@@ -80,11 +80,12 @@ public class PhonepeService {
         if (payer == receiver) {
             throw new InvalidRequestException("You cannot send money to yourself");
         }
-        bank.findUser(receiver);   // make sure the receiver exists BEFORE any money moves
 
+        // No pre-flight check on the receiver here: the bank's transfer is atomic, so if the receiver does not
+        // exist the whole call fails with nothing moved - a separate lookup first would only add a network
+        // round trip without adding any safety.
         Transaction t = record(payer, receiver, value, "Transfer");
-        debit(t, payer, value);
-        credit(t, payer, receiver, value);
+        transfer(t, payer, receiver, value);
         return settle(t, TransactionStatus.COMPLETED, null);
     }
 
@@ -128,41 +129,36 @@ public class PhonepeService {
         }
     }
 
-    private void credit(Transaction t, long payer, long receiver, BigDecimal amount) {
-        try {
-            creditWithRetry(receiver, amount);
-        } catch (BankOutcomeUnknownException e) {
-            unresolved(t, "Credit to the receiver not confirmed by the bank: " + e.getMessage());
-            throw new TransferFailedException("We could not confirm that the money reached the receiver. Our team will "
-                    + "settle it. Reference: " + t.getTransactionId());
-        } catch (RuntimeException e) {
-            refund(t, payer, amount, e);   // the bank definitely did not credit the receiver; always throws
-        }
-    }
-
-    private void refund(Transaction t, long payer, BigDecimal amount, RuntimeException reason) {
-        try {
-            creditWithRetry(payer, amount);
-        } catch (RuntimeException refundFailure) {
-            unresolved(t, "Receiver could not be credited (" + reason.getMessage() + ") and the refund failed ("
-                    + refundFailure.getMessage() + ")");
-            throw new TransferFailedException("The transfer failed and we could not return your money automatically. "
-                    + "Our team will settle it. Reference: " + t.getTransactionId());
-        }
-        settle(t, TransactionStatus.FAILED, "Receiver could not be credited; payer refunded (" + reason.getMessage() + ")");
-        throw new TransferFailedException("The transfer could not be completed. Your money has been returned.");
-    }
-
-    // A conflict means the bank changed nothing, so trying again cannot double-apply the deposit.
-    private void creditWithRetry(long phno, BigDecimal amount) {
+    // The bank's transfer moves both legs in one database transaction, so unlike the old separate
+    // withdraw-then-deposit design there is no window where only one side has happened, and no refund logic is
+    // needed: either it goes through completely, or the bank guarantees nothing changed.
+    private void transfer(Transaction t, long payer, long receiver, BigDecimal amount) {
+        String idempotencyKey = "phonepe-" + t.getTransactionId();
         for (int attempt = 1; ; attempt++) {
             try {
-                bank.deposit(phno, amount);
+                bank.transfer(payer, receiver, amount, idempotencyKey);
                 return;
             } catch (BankConflictException e) {
-                if (attempt >= MAX_CREDIT_ATTEMPTS) {
-                    throw e;
+                // A conflict means the bank's transaction rolled back completely - nothing committed on this
+                // attempt, so exhausting retries is a plain (if unusual) failure, not an unknown outcome.
+                if (attempt >= MAX_TRANSFER_ATTEMPTS) {
+                    settle(t, TransactionStatus.FAILED, "The bank stayed busy after " + attempt + " attempts: " + e.getMessage());
+                    throw new TransferFailedException("The bank was too busy to complete your transfer. Please try again.");
                 }
+                // retrying with the SAME idempotency key is always safe: nothing committed on the failed attempt
+            } catch (BankOutcomeUnknownException e) {
+                if (attempt >= MAX_TRANSFER_ATTEMPTS) {
+                    unresolved(t, "Transfer not confirmed after " + attempt + " attempts: " + e.getMessage());
+                    throw new TransferFailedException("We could not confirm your payment with the bank. Check your balance "
+                            + "and transactions before trying again. Reference: " + t.getTransactionId());
+                }
+                // Retrying with the SAME idempotency key is always safe here too: the bank either already
+                // completed this exact attempt and returns that result unchanged, or it never did and executes
+                // it fresh - either way the money can never move twice.
+            } catch (RuntimeException e) {
+                // refused (bad receiver, insufficient funds) or never reached the bank: nothing moved either way
+                settle(t, TransactionStatus.FAILED, e.getMessage());
+                throw e;
             }
         }
     }

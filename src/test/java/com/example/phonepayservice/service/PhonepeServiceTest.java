@@ -169,17 +169,15 @@ class PhonepeServiceTest {
     // ============ sendMoney: the happy path ============
 
     @Test
-    void sendMoney_movesTheMoneyInTheRightOrderAndRecordsIt() {
+    void sendMoney_movesTheMoneyInOneAtomicCall_andRecordsIt() {
         when(transactions.findMaxTransactionId()).thenReturn(null);
 
         Transaction t = service.sendMoney(PAYER, RECEIVER, new BigDecimal("250"));
 
         InOrder order = inOrder(bank, transactions);
-        order.verify(bank).findUser(RECEIVER);                                // 1. the receiver must exist
-        order.verify(transactions).saveAndFlush(any(Transaction.class));      // 2. write it down as PENDING
-        order.verify(bank).withdraw(PAYER, AMOUNT);                           // 3. take the money
-        order.verify(bank).deposit(RECEIVER, AMOUNT);                         // 4. give the money
-        order.verify(transactions).save(any(Transaction.class));              // 5. write down that it completed
+        order.verify(transactions).saveAndFlush(any(Transaction.class));                // 1. write it down as PENDING
+        order.verify(bank).transfer(PAYER, RECEIVER, AMOUNT, "phonepe-100000");          // 2. move it, in one call
+        order.verify(transactions).save(any(Transaction.class));                        // 3. write down that it completed
         assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.COMPLETED), writes);
         assertEquals(TransactionStatus.COMPLETED, t.getStatus());
         assertEquals("Transfer", t.getMode());
@@ -193,23 +191,24 @@ class PhonepeServiceTest {
     void sendMoney_firstTransactionGets100000_thenOneMoreThanTheHighest() {
         when(transactions.findMaxTransactionId()).thenReturn(null);
         assertEquals(100000L, service.sendMoney(PAYER, RECEIVER, AMOUNT).getTransactionId());
+        verify(bank).transfer(PAYER, RECEIVER, AMOUNT, "phonepe-100000");
 
         when(transactions.findMaxTransactionId()).thenReturn(100007L);
         assertEquals(100008L, service.sendMoney(PAYER, RECEIVER, AMOUNT).getTransactionId());
+        verify(bank).transfer(PAYER, RECEIVER, AMOUNT, "phonepe-100008");
     }
 
-    // ============ sendMoney: bad requests never move money ============
-
+    // The idempotency key is derived only from OUR OWN transaction id, chosen before the bank is ever called, so
+    // there is no separate lookup step to skip - the atomic transfer endpoint itself is where "does the receiver
+    // exist" gets answered, and it answers it having moved nothing if the answer is no.
     @Test
     void sendMoney_toAnUnknownNumber_neverTakesTheMoney() {
-        // The old code took the sender's money FIRST and only then noticed the receiver did not exist.
-        when(bank.findUser(RECEIVER)).thenThrow(new UserNotExistException("User not found"));
+        when(transactions.findMaxTransactionId()).thenReturn(null);
+        doThrow(new UserNotExistException("User not found")).when(bank).transfer(eq(PAYER), eq(RECEIVER), any(), any());
 
         assertThrows(UserNotExistException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT));
 
-        verify(bank, never()).withdraw(any(Long.class), any());
-        verify(bank, never()).deposit(any(Long.class), any());
-        verify(transactions, never()).saveAndFlush(any());
+        assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.FAILED), writes);
     }
 
     @Test
@@ -254,114 +253,86 @@ class PhonepeServiceTest {
         verifyNoInteractions(bank, transactions);
     }
 
-    // ============ sendMoney: the bank refuses to release the money ============
+    // ============ sendMoney: the bank refuses the transfer outright ============
 
     @Test
-    void sendMoney_insufficientFunds_failsWithoutTouchingTheReceiver() {
-        doThrow(new BalanceException("Insufficient Funds")).when(bank).withdraw(eq(PAYER), any());
+    void sendMoney_insufficientFunds_failsCleanly() {
+        when(transactions.findMaxTransactionId()).thenReturn(null);
+        doThrow(new BalanceException("Insufficient Funds")).when(bank).transfer(eq(PAYER), eq(RECEIVER), any(), any());
 
         BalanceException ex = assertThrows(BalanceException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT));
 
         assertEquals("Insufficient Funds", ex.getMessage());
-        verify(bank, never()).deposit(any(Long.class), any());
         assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.FAILED), writes);
     }
 
     @Test
-    void sendMoney_bankUnreachableAtWithdrawal_failsCleanly() {
-        doThrow(new BankUnavailableException("down", null)).when(bank).withdraw(eq(PAYER), any());
+    void sendMoney_bankUnreachable_failsCleanly() {
+        when(transactions.findMaxTransactionId()).thenReturn(null);
+        doThrow(new BankUnavailableException("down", null)).when(bank).transfer(eq(PAYER), eq(RECEIVER), any(), any());
 
         assertThrows(BankUnavailableException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT));
 
-        verify(bank, never()).deposit(any(Long.class), any());
         assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.FAILED), writes);
     }
 
+    // ============ sendMoney: the outcome is ambiguous (timeout) - retried with the SAME idempotency key ============
+
     @Test
-    void sendMoney_withdrawalOutcomeUnknown_isNeverRefundedOrRetried() {
-        // A timeout: the bank MAY have taken the money. Guessing either way could create or destroy money.
-        doThrow(new BankOutcomeUnknownException("timeout", null)).when(bank).withdraw(eq(PAYER), any());
+    void sendMoney_transferOutcomeUnknownOnce_retriesWithTheSameKey_andSucceeds() {
         when(transactions.findMaxTransactionId()).thenReturn(null);
+        doThrow(new BankOutcomeUnknownException("timeout", null)).doNothing()
+                .when(bank).transfer(eq(PAYER), eq(RECEIVER), any(), any());
+
+        Transaction t = service.sendMoney(PAYER, RECEIVER, AMOUNT);
+
+        verify(bank, times(2)).transfer(PAYER, RECEIVER, AMOUNT, "phonepe-100000");   // same key both times
+        assertEquals(TransactionStatus.COMPLETED, t.getStatus());
+    }
+
+    @Test
+    void sendMoney_transferStaysUnknown_needsAPersonAfterMaxAttempts() {
+        // A persistent timeout: the bank may or may not have completed it. Guessing either way could create or
+        // destroy money, so this is the one outcome that must NOT be resolved automatically.
+        when(transactions.findMaxTransactionId()).thenReturn(null);
+        doThrow(new BankOutcomeUnknownException("timeout", null)).when(bank).transfer(eq(PAYER), eq(RECEIVER), any(), any());
 
         TransferFailedException ex = assertThrows(TransferFailedException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT));
 
         assertTrue(ex.getMessage().contains("could not confirm"), ex.getMessage());
         assertTrue(ex.getMessage().contains("100000"), "the user needs the reference number: " + ex.getMessage());
-        verify(bank, times(1)).withdraw(eq(PAYER), any());
-        verify(bank, never()).deposit(any(Long.class), any());
+        verify(bank, times(3)).transfer(PAYER, RECEIVER, AMOUNT, "phonepe-100000");
         assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.NEEDS_RECONCILIATION), writes);
     }
 
-    // ============ sendMoney: the receiver cannot be credited after the payer was charged ============
+    // ============ sendMoney: the bank was busy (a conflict) - this one is definite, not ambiguous ============
 
     @Test
-    void sendMoney_receiverRefusesTheMoney_payerIsRefunded() {
-        doThrow(new BalanceException("Amount too low")).when(bank).deposit(eq(RECEIVER), any());
-
-        TransferFailedException ex = assertThrows(TransferFailedException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT));
-
-        assertEquals("The transfer could not be completed. Your money has been returned.", ex.getMessage());
-        verify(bank).deposit(PAYER, AMOUNT);   // the refund
-        assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.FAILED), writes);
-    }
-
-    @Test
-    void sendMoney_receiverVanishedBetweenCheckAndCredit_payerIsRefunded() {
-        doThrow(new UserNotExistException("User not found")).when(bank).deposit(eq(RECEIVER), any());
-
-        assertThrows(TransferFailedException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT));
-
-        verify(bank).deposit(PAYER, AMOUNT);
-    }
-
-    @Test
-    void sendMoney_receiverRefusesAndTheRefundFailsToo_needsAPerson() {
-        doThrow(new BalanceException("Amount too low")).when(bank).deposit(eq(RECEIVER), any());
-        doThrow(new BankUnavailableException("down", null)).when(bank).deposit(eq(PAYER), any());
+    void sendMoney_transferConflictTwice_isRetriedAndSucceeds() {
+        // A conflict means the bank's own transaction rolled back completely - nothing committed - so retrying
+        // with the same key can never move the money twice.
         when(transactions.findMaxTransactionId()).thenReturn(null);
-
-        TransferFailedException ex = assertThrows(TransferFailedException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT));
-
-        assertTrue(ex.getMessage().contains("could not return your money automatically"), ex.getMessage());
-        assertTrue(ex.getMessage().contains("100000"), ex.getMessage());
-        assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.NEEDS_RECONCILIATION), writes);
-    }
-
-    @Test
-    void sendMoney_creditOutcomeUnknown_payerIsNotRefunded() {
-        // The receiver MAY have been credited. Refunding now could pay the money out twice.
-        doThrow(new BankOutcomeUnknownException("timeout", null)).when(bank).deposit(eq(RECEIVER), any());
-
-        TransferFailedException ex = assertThrows(TransferFailedException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT));
-
-        assertTrue(ex.getMessage().contains("could not confirm that the money reached the receiver"), ex.getMessage());
-        verify(bank, times(1)).deposit(eq(RECEIVER), any());
-        verify(bank, never()).deposit(eq(PAYER), any());
-        assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.NEEDS_RECONCILIATION), writes);
-    }
-
-    @Test
-    void sendMoney_receiverBusyTwice_isRetriedAndSucceeds() {
-        // "busy" means the bank changed nothing, so trying again can never credit twice
         doThrow(new BankConflictException("busy")).doThrow(new BankConflictException("busy")).doNothing()
-                .when(bank).deposit(eq(RECEIVER), any());
+                .when(bank).transfer(eq(PAYER), eq(RECEIVER), any(), any());
 
         Transaction t = service.sendMoney(PAYER, RECEIVER, AMOUNT);
 
-        verify(bank, times(3)).deposit(RECEIVER, AMOUNT);
-        verify(bank, never()).deposit(eq(PAYER), any());
+        verify(bank, times(3)).transfer(PAYER, RECEIVER, AMOUNT, "phonepe-100000");
         assertEquals(TransactionStatus.COMPLETED, t.getStatus());
     }
 
     @Test
-    void sendMoney_receiverStaysBusy_givesUpAndRefunds() {
-        doThrow(new BankConflictException("busy")).when(bank).deposit(eq(RECEIVER), any());
+    void sendMoney_transferStaysBusy_failsCleanly_notNeedsReconciliation() {
+        // Unlike a timeout, a conflict is never ambiguous: the bank guarantees nothing committed, so giving up
+        // after a conflict is a plain failure (nothing moved), not a case that needs a human to check.
+        when(transactions.findMaxTransactionId()).thenReturn(null);
+        doThrow(new BankConflictException("busy")).when(bank).transfer(eq(PAYER), eq(RECEIVER), any(), any());
 
         TransferFailedException ex = assertThrows(TransferFailedException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT));
 
-        assertEquals("The transfer could not be completed. Your money has been returned.", ex.getMessage());
-        verify(bank, times(3)).deposit(RECEIVER, AMOUNT);
-        verify(bank, times(1)).deposit(PAYER, AMOUNT);
+        assertEquals("The bank was too busy to complete your transfer. Please try again.", ex.getMessage());
+        verify(bank, times(3)).transfer(PAYER, RECEIVER, AMOUNT, "phonepe-100000");
+        assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.FAILED), writes);
     }
 
     // ============ bookkeeping ============
@@ -374,11 +345,11 @@ class PhonepeServiceTest {
         assertThrows(DataIntegrityViolationException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT));
 
         verify(transactions, times(5)).saveAndFlush(any(Transaction.class));   // gave up after 5 attempts
-        verify(bank, never()).withdraw(any(Long.class), any());
+        verify(bank, never()).transfer(any(Long.class), any(Long.class), any(), any());
     }
 
     @Test
-    void transactionIdCollision_retriesWithTheNextFreeNumber() {
+    void transactionIdCollision_retriesWithTheNextFreeNumber_andThatBecomesTheIdempotencyKeyToo() {
         // another request grabbed 100006 a moment ago; the unique constraint refused ours
         doThrow(new DataIntegrityViolationException("dup"))
                 .doAnswer(inv -> inv.getArgument(0))
@@ -389,18 +360,19 @@ class PhonepeServiceTest {
 
         assertEquals(100007L, t.getTransactionId());
         assertEquals(TransactionStatus.COMPLETED, t.getStatus());
+        verify(bank).transfer(PAYER, RECEIVER, AMOUNT, "phonepe-100007");
     }
 
     @Test
     void ifTheFinalStatusCannotBeSaved_thePaymentStillCountsAsDone() {
         // the money HAS moved; failing the request now would only hide that
+        when(transactions.findMaxTransactionId()).thenReturn(null);
         doThrow(new RuntimeException("db down")).when(transactions).save(any(Transaction.class));
 
         Transaction t = service.sendMoney(PAYER, RECEIVER, AMOUNT);
 
         assertEquals(TransactionStatus.COMPLETED, t.getStatus());
-        verify(bank).withdraw(PAYER, AMOUNT);
-        verify(bank).deposit(RECEIVER, AMOUNT);
+        verify(bank).transfer(PAYER, RECEIVER, AMOUNT, "phonepe-100000");
     }
 
     // ============ makePayment ============

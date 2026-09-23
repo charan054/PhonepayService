@@ -1,5 +1,6 @@
 package com.example.phonepayservice.client;
 
+import com.example.phonepayservice.dto.BankTransferRequest;
 import com.example.phonepayservice.dto.BankUser;
 import com.example.phonepayservice.exception.BalanceException;
 import com.example.phonepayservice.exception.BankConflictException;
@@ -39,6 +40,7 @@ import static org.mockito.Mockito.when;
 class BankGatewayTest {
 
     private static final long PHNO = 9876543210L;
+    private static final long RECEIVER = 9123456789L;
     private static final String SERVICE_KEY = "test-service-key";
 
     @Mock
@@ -248,5 +250,80 @@ class BankGatewayTest {
         when(bank.depositByphno(anyString(), any(Long.class), any(Double.class))).thenThrow(bankAnswers(504, "Gateway Timeout"));
 
         assertThrows(BankOutcomeUnknownException.class, () -> gateway().deposit(PHNO, new BigDecimal("5")));
+    }
+
+    // ---------- transfer: the same three-way split, sent as one call instead of two ----------
+
+    @Test
+    void transfer_sendsPayerReceiverAmountAndTheServiceKey() {
+        gateway().transfer(PHNO, RECEIVER, new BigDecimal("250.50"), "key-1");
+
+        verify(bank).transfer(SERVICE_KEY, new BankTransferRequest(PHNO, RECEIVER, new BigDecimal("250.50"), "key-1"));
+    }
+
+    @Test
+    void transfer_insufficientFunds_isRefusedWithTheBanksMessage() {
+        when(bank.transfer(anyString(), any())).thenThrow(bankAnswers(400, "Insufficient Funds"));
+
+        BalanceException ex = assertThrows(BalanceException.class,
+                () -> gateway().transfer(PHNO, RECEIVER, new BigDecimal("500"), "key-1"));
+
+        assertEquals("Insufficient Funds", ex.getMessage());
+    }
+
+    // Recognizing "Payer not found" and "Receiver not found" (not just the literal "User not found" the other
+    // three endpoints use) is what lets a stranded transfer be reported as UserNotExistException here too.
+    @Test
+    void transfer_bankSaysPayerNotFound_isUserNotExist() {
+        when(bank.transfer(anyString(), any())).thenThrow(bankAnswers(400, "Payer not found"));
+
+        assertThrows(UserNotExistException.class, () -> gateway().transfer(PHNO, RECEIVER, new BigDecimal("5"), "key-1"));
+    }
+
+    @Test
+    void transfer_bankSaysReceiverNotFound_isUserNotExist() {
+        when(bank.transfer(anyString(), any())).thenThrow(bankAnswers(400, "Receiver not found"));
+
+        assertThrows(UserNotExistException.class, () -> gateway().transfer(PHNO, RECEIVER, new BigDecimal("5"), "key-1"));
+    }
+
+    @Test
+    void transfer_toTheSameAccount_isRefused() {
+        when(bank.transfer(anyString(), any())).thenThrow(bankAnswers(400, "Cannot transfer to the same account"));
+
+        BalanceException ex = assertThrows(BalanceException.class,
+                () -> gateway().transfer(PHNO, RECEIVER, new BigDecimal("5"), "key-1"));
+
+        assertEquals("Cannot transfer to the same account", ex.getMessage());
+    }
+
+    @Test
+    void transfer_conflict_isBankConflictException_notAFailure() {
+        when(bank.transfer(anyString(), any()))
+                .thenThrow(bankAnswers(409, "Another request changed the same data at the same time. Please retry."));
+
+        assertThrows(BankConflictException.class, () -> gateway().transfer(PHNO, RECEIVER, new BigDecimal("5"), "key-1"));
+    }
+
+    @Test
+    void transfer_bankUnreachable_meansNothingWasSent() {
+        when(bank.transfer(anyString(), any())).thenThrow(ioProblem(new ConnectException("Connection refused")));
+
+        assertThrows(BankUnavailableException.class, () -> gateway().transfer(PHNO, RECEIVER, new BigDecimal("5"), "key-1"));
+    }
+
+    @Test
+    void transfer_readTimeout_outcomeIsUnknown() {
+        when(bank.transfer(anyString(), any())).thenThrow(ioProblem(new SocketTimeoutException("Read timed out")));
+
+        assertThrows(BankOutcomeUnknownException.class, () -> gateway().transfer(PHNO, RECEIVER, new BigDecimal("5"), "key-1"));
+    }
+
+    @Test
+    void transfer_bankServerError_outcomeIsUnknown() {
+        // a 500 can be sent AFTER the bank already committed, so it must never be treated as "nothing happened"
+        when(bank.transfer(anyString(), any())).thenThrow(bankAnswers(500, "Internal Server Error"));
+
+        assertThrows(BankOutcomeUnknownException.class, () -> gateway().transfer(PHNO, RECEIVER, new BigDecimal("5"), "key-1"));
     }
 }
