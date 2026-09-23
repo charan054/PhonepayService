@@ -166,6 +166,17 @@ class PhonepeIntegrationTest {
     // ============ login and sessions ============
 
     @Test
+    void everyCallToTheBank_carriesTheConfiguredServiceKey() throws Exception {
+        // Proves the key is really wired through (bank.service.api-key -> BankGateway -> the header), not just
+        // configured and silently unused - the Bank app now rejects any call missing this header.
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        withdrawSucceeds(ASHA);
+        login(ASHA);
+
+        bank.verify(getRequestedFor(urlPathEqualTo("/bank/displayuser")).withHeader("X-Service-Key", equalTo("test-service-key")));
+    }
+
+    @Test
     void login_thenProfile_showsTheBanksData_withoutTheAadhaarNumber() throws Exception {
         bankHasUser(ASHA, "KUMAR CHARAN", 1000.0);
         String token = login(ASHA);
