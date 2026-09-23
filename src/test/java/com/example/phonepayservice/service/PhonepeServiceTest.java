@@ -2,16 +2,19 @@ package com.example.phonepayservice.service;
 
 import com.example.phonepayservice.client.BankGateway;
 import com.example.phonepayservice.dto.BalanceResponse;
+import com.example.phonepayservice.dto.BankLoginResult;
 import com.example.phonepayservice.dto.BankUser;
 import com.example.phonepayservice.dto.LoginResponse;
 import com.example.phonepayservice.dto.PageResponse;
 import com.example.phonepayservice.dto.ProfileResponse;
 import com.example.phonepayservice.entity.Transaction;
 import com.example.phonepayservice.entity.TransactionStatus;
+import com.example.phonepayservice.exception.AccountLockedException;
 import com.example.phonepayservice.exception.BalanceException;
 import com.example.phonepayservice.exception.BankConflictException;
 import com.example.phonepayservice.exception.BankOutcomeUnknownException;
 import com.example.phonepayservice.exception.BankUnavailableException;
+import com.example.phonepayservice.exception.InvalidCredentialsException;
 import com.example.phonepayservice.exception.InvalidRequestException;
 import com.example.phonepayservice.exception.TransactionNotFoundException;
 import com.example.phonepayservice.exception.TransferFailedException;
@@ -98,6 +101,12 @@ class PhonepeServiceTest {
         return u;
     }
 
+    private BankLoginResult bankLoginResult(String name) {
+        BankLoginResult r = new BankLoginResult();
+        r.setName(name);
+        return r;
+    }
+
     private Transaction row(long transactionId, long payer, Long receiver, TransactionStatus status) {
         Transaction t = new Transaction();
         t.setTransactionId(transactionId);
@@ -112,10 +121,10 @@ class PhonepeServiceTest {
 
     @Test
     void login_startsASessionForThatPhoneNumber() {
-        when(bank.findUser(PAYER)).thenReturn(bankUser("KUMAR CHARAN", 500));
+        when(bank.login(PAYER, "1234")).thenReturn(bankLoginResult("KUMAR CHARAN"));
         when(sessions.start(PAYER)).thenReturn(new SessionService.IssuedSession("tok", NOW.plusSeconds(1800)));
 
-        LoginResponse response = service.login(PAYER);
+        LoginResponse response = service.login(PAYER, "1234");
 
         assertEquals("tok", response.token());
         assertEquals(NOW.plusSeconds(1800), response.expiresAt());
@@ -126,17 +135,28 @@ class PhonepeServiceTest {
     @ParameterizedTest
     @ValueSource(longs = {123, 987654321L, 98765432101L, 5876543210L})
     void login_invalidPhoneNumber_isRejectedBeforeTheBankIsAsked(long badPhone) {
-        InvalidRequestException ex = assertThrows(InvalidRequestException.class, () -> service.login(badPhone));
+        InvalidRequestException ex = assertThrows(InvalidRequestException.class, () -> service.login(badPhone, "1234"));
 
         assertEquals("Invalid mobile number", ex.getMessage());
         verifyNoInteractions(bank, sessions);
     }
 
+    // The bank keeps this generic on purpose (wrong PIN and "no such phone" look identical), so PhonepayService
+    // must not narrow it either - narrowing it would let a caller tell the two apart.
     @Test
-    void login_unknownUser_startsNoSession() {
-        when(bank.findUser(PAYER)).thenThrow(new UserNotExistException("User not found"));
+    void login_wrongPinOrUnknownUser_startsNoSession() {
+        when(bank.login(PAYER, "0000")).thenThrow(new InvalidCredentialsException("Invalid phone number or PIN"));
 
-        assertThrows(UserNotExistException.class, () -> service.login(PAYER));
+        assertThrows(InvalidCredentialsException.class, () -> service.login(PAYER, "0000"));
+
+        verifyNoInteractions(sessions);
+    }
+
+    @Test
+    void login_accountLocked_startsNoSession() {
+        when(bank.login(PAYER, "1234")).thenThrow(new AccountLockedException("Too many failed attempts. Try again after 2026-09-23T10:15:00Z."));
+
+        assertThrows(AccountLockedException.class, () -> service.login(PAYER, "1234"));
 
         verifyNoInteractions(sessions);
     }

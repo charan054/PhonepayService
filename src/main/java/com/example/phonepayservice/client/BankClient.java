@@ -1,5 +1,7 @@
 package com.example.phonepayservice.client;
 
+import com.example.phonepayservice.dto.BankLoginRequest;
+import com.example.phonepayservice.dto.BankLoginResult;
 import com.example.phonepayservice.dto.BankTransferRequest;
 import com.example.phonepayservice.dto.BankUser;
 import org.springframework.cloud.openfeign.FeignClient;
@@ -11,9 +13,13 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 
 // Talk to the bank through BankGateway, which supplies the X-Service-Key header and turns the bank's answers
-// and failures into meaningful exceptions. The Bank app now requires this header on every one of these calls.
+// and failures into meaningful exceptions. The Bank app now requires this header on every one of these calls,
+// EXCEPT login: POST /bank/login is public on the bank's side, because that call itself is the credential check.
 @FeignClient(name = "Bankapplication", url = "${bank.service.url}")
 public interface BankClient {
+    @PostMapping("/bank/login")
+    BankLoginResult login(@RequestBody BankLoginRequest request);
+
     // the bank's small summary of a user (name, account number, balance), not the full record with every transaction
     @GetMapping("/bank/displayuser")
     BankUser displayUser(@RequestHeader("X-Service-Key") String serviceKey, @RequestParam("phno") long phno);
