@@ -56,6 +56,11 @@ public class GlobalExceptionHandler {
         return reply(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage());
     }
 
+    @ExceptionHandler(TooManyRequestsException.class)
+    public ResponseEntity<String> handleTooManyRequests(TooManyRequestsException e) {
+        return reply(HttpStatus.TOO_MANY_REQUESTS, e.getMessage());
+    }
+
     // the payment did not complete; the message says what happened to the money
     @ExceptionHandler(TransferFailedException.class)
     public ResponseEntity<String> handleTransferFailed(TransferFailedException e) {

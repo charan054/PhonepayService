@@ -1,5 +1,6 @@
 package com.example.phonepayservice.controller;
 
+import com.example.phonepayservice.configuration.ClockConfig;
 import com.example.phonepayservice.configuration.WebConfig;
 import com.example.phonepayservice.dto.BalanceResponse;
 import com.example.phonepayservice.dto.LoginResponse;
@@ -48,7 +49,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 // "test" profile: gives spring.datasource.password a value, so these tests don't need DB_PASSWORD on the machine.
 @WebMvcTest(PhonepeController.class)
-@Import(WebConfig.class)
+@Import({WebConfig.class, ClockConfig.class})
 @ActiveProfiles("test")
 class PhonepeControllerTest {
 
@@ -194,6 +195,46 @@ class PhonepeControllerTest {
         mockMvc.perform(post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":9876543210}"))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(content().string("The bank service is unavailable. Please try again later."));
+    }
+
+    // ============ POST /phonepe/login: rate limiting per address ============
+
+    @Test
+    @org.springframework.test.annotation.DirtiesContext(methodMode = org.springframework.test.annotation.DirtiesContext.MethodMode.AFTER_METHOD)
+    void login_tooManyAttemptsFromTheSameAddress_is429() throws Exception {
+        when(phonepeService.login(CALLER)).thenReturn(new LoginResponse("abc123", NOW.plusSeconds(1800), CALLER, "KUMAR CHARAN"));
+
+        for (int i = 0; i < WebConfig.DEFAULT_MAX_LOGIN_ATTEMPTS_PER_ADDRESS; i++) {
+            mockMvc.perform(loginRequest().with(fromAddress("203.0.113.5"))).andExpect(status().isOk());
+        }
+
+        mockMvc.perform(loginRequest().with(fromAddress("203.0.113.5")))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(content().string("Too many login attempts from this address. Please wait a minute and try again."));
+    }
+
+    @Test
+    @org.springframework.test.annotation.DirtiesContext(methodMode = org.springframework.test.annotation.DirtiesContext.MethodMode.AFTER_METHOD)
+    void login_rateLimitIsPerAddress_anotherAddressIsUnaffected() throws Exception {
+        when(phonepeService.login(CALLER)).thenReturn(new LoginResponse("abc123", NOW.plusSeconds(1800), CALLER, "KUMAR CHARAN"));
+
+        for (int i = 0; i < WebConfig.DEFAULT_MAX_LOGIN_ATTEMPTS_PER_ADDRESS; i++) {
+            mockMvc.perform(loginRequest().with(fromAddress("203.0.113.5"))).andExpect(status().isOk());
+        }
+        mockMvc.perform(loginRequest().with(fromAddress("203.0.113.5"))).andExpect(status().isTooManyRequests());
+
+        mockMvc.perform(loginRequest().with(fromAddress("203.0.113.9"))).andExpect(status().isOk());
+    }
+
+    private static MockHttpServletRequestBuilder loginRequest() {
+        return post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":9876543210}");
+    }
+
+    private static org.springframework.test.web.servlet.request.RequestPostProcessor fromAddress(String ip) {
+        return request -> {
+            request.setRemoteAddr(ip);
+            return request;
+        };
     }
 
     // ============ POST /phonepe/logout ============
@@ -378,6 +419,34 @@ class PhonepeControllerTest {
         mockMvc.perform(asCaller(post("/phonepe/sendmoney")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"receiverPhno\":9123456789,\"amount\":250}"))
                 .andExpect(status().isServiceUnavailable());
+    }
+
+    // ============ POST /phonepe/sendmoney: rate limiting per account ============
+
+    // Uses its own token/account, never CALLER's, so this test's budget never mixes with the many sendMoney
+    // tests above that already use CALLER - and never leaks into them either, thanks to @DirtiesContext.
+    private static final long RATE_LIMITED_CALLER = 9000000001L;
+    private static final String RATE_LIMITED_TOKEN = "rate-limit-test-token";
+
+    @Test
+    @org.springframework.test.annotation.DirtiesContext(methodMode = org.springframework.test.annotation.DirtiesContext.MethodMode.AFTER_METHOD)
+    void sendMoney_tooManyRequestsFromTheSameAccount_is429() throws Exception {
+        when(sessionService.authenticate(RATE_LIMITED_TOKEN)).thenReturn(RATE_LIMITED_CALLER);
+        when(phonepeService.sendMoney(eq(RATE_LIMITED_CALLER), eq(RECEIVER), any()))
+                .thenReturn(transaction(100000, RATE_LIMITED_CALLER, RECEIVER, TransactionStatus.COMPLETED));
+
+        for (int i = 0; i < WebConfig.DEFAULT_MAX_SENDMONEY_ATTEMPTS_PER_ACCOUNT; i++) {
+            mockMvc.perform(sendMoneyRequest(RATE_LIMITED_TOKEN)).andExpect(status().isOk());
+        }
+
+        mockMvc.perform(sendMoneyRequest(RATE_LIMITED_TOKEN))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(content().string("Too many transfer requests. Please wait a minute and try again."));
+    }
+
+    private static MockHttpServletRequestBuilder sendMoneyRequest(String token) {
+        return post("/phonepe/sendmoney").header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"receiverPhno\":9123456789,\"amount\":250}");
     }
 
     // ============ POST /phonepe/makepayment ============
