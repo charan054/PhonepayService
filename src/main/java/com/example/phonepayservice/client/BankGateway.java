@@ -8,6 +8,7 @@ import com.example.phonepayservice.exception.BankUnavailableException;
 import com.example.phonepayservice.exception.UserNotExistException;
 import feign.FeignException;
 import feign.RetryableException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -23,19 +24,22 @@ import java.util.function.Supplier;
  *   <li>never delivered (could not connect): the bank did nothing;</li>
  *   <li>outcome unknown (timeout, 5xx): the bank may have done it, so nobody may guess.</li>
  * </ul>
+ * Also supplies the X-Service-Key header the bank now requires on all three of these endpoints.
  */
 @Component
 public class BankGateway {
     private final BankClient bank;
+    private final String serviceKey;
 
-    public BankGateway(BankClient bank) {
+    public BankGateway(BankClient bank, @Value("${bank.service.api-key}") String serviceKey) {
         this.bank = bank;
+        this.serviceKey = serviceKey;
     }
 
     /** Read-only, so any failure is simply "try again later". */
     public BankUser findUser(long phno) {
         try {
-            BankUser user = bank.displayUser(phno);
+            BankUser user = bank.displayUser(serviceKey, phno);
             if (user == null) {
                 throw new UserNotExistException("User not found");
             }
@@ -48,11 +52,11 @@ public class BankGateway {
     }
 
     public void withdraw(long phno, BigDecimal amount) {
-        moveMoney(() -> bank.withdrawByphno(phno, amount.doubleValue()));
+        moveMoney(() -> bank.withdrawByphno(serviceKey, phno, amount.doubleValue()));
     }
 
     public void deposit(long phno, BigDecimal amount) {
-        moveMoney(() -> bank.depositByphno(phno, amount.doubleValue()));
+        moveMoney(() -> bank.depositByphno(serviceKey, phno, amount.doubleValue()));
     }
 
     private void moveMoney(Supplier<String> call) {
