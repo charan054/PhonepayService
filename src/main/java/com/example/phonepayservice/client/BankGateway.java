@@ -1,5 +1,6 @@
 package com.example.phonepayservice.client;
 
+import com.example.phonepayservice.dto.BankTransferRequest;
 import com.example.phonepayservice.dto.BankUser;
 import com.example.phonepayservice.exception.BalanceException;
 import com.example.phonepayservice.exception.BankConflictException;
@@ -59,6 +60,12 @@ public class BankGateway {
         moveMoney(() -> bank.depositByphno(serviceKey, phno, amount.doubleValue()));
     }
 
+    // Idempotent by construction (see BankTransferRequest): retrying with the same idempotencyKey after a
+    // BankConflictException or BankOutcomeUnknownException is always safe.
+    public void transfer(long payerPhno, long receiverPhno, BigDecimal amount, String idempotencyKey) {
+        moveMoney(() -> bank.transfer(serviceKey, new BankTransferRequest(payerPhno, receiverPhno, amount, idempotencyKey)));
+    }
+
     private void moveMoney(Supplier<String> call) {
         try {
             call.get();
@@ -78,7 +85,9 @@ public class BankGateway {
 
     private RuntimeException refused(FeignException e) {
         String reason = e.contentUTF8();
-        if (reason != null && reason.contains("User not found")) {
+        // Matches "User not found" (displayuser/withdraw/deposit) as well as "Payer not found" and
+        // "Receiver not found" (transfer) - the caller only needs to know someone in the request doesn't exist.
+        if (reason != null && reason.toLowerCase().contains("not found")) {
             return new UserNotExistException("User not found");
         }
         return new BalanceException(reason == null || reason.isBlank() ? "The bank rejected the request" : reason);
