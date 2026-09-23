@@ -73,6 +73,7 @@ class PhonepeIntegrationTest {
     private static final long ASHA = 9876543210L;
     private static final long RAVI = 9123456789L;
     private static final long MEENA = 9000000001L;
+    private static final String PIN = "1234";
     private static final String TRANSFER = "POST /bank/transfer";
 
     @RegisterExtension
@@ -100,15 +101,24 @@ class PhonepeIntegrationTest {
 
     // ============ the fake bank ============
 
+    // Registers this phone number both for the login PIN check and for the account lookups made after login
+    // (profile, balance, ...): virtually every test that needs "the bank knows this person" needs both.
     private void bankHasUser(long phno, String name, double balance) {
         bank.stubFor(WireMock.get(urlPathEqualTo("/bank/displayuser")).withQueryParam("phno", equalTo("" + phno))
                 .willReturn(okJson("{\"userId\":1,\"acno\":1000000000,\"name\":\"" + name + "\",\"aadharNumber\":111111111111,"
                         + "\"phno\":" + phno + ",\"balance\":" + balance + "}")));
+        bankLoginSucceeds(phno, name);
     }
 
-    private void bankHasNoUser(long phno) {
-        bank.stubFor(WireMock.get(urlPathEqualTo("/bank/displayuser")).withQueryParam("phno", equalTo("" + phno))
-                .willReturn(aResponse().withStatus(400).withHeader("Content-Type", "text/plain").withBody("User not found")));
+    private void bankLoginSucceeds(long phno, String name) {
+        bank.stubFor(WireMock.post(urlPathEqualTo("/bank/login"))
+                .willReturn(okJson("{\"token\":\"bank-token\",\"expiresAt\":\"2099-01-01T00:00:00Z\","
+                        + "\"phno\":" + phno + ",\"name\":\"" + name + "\"}")));
+    }
+
+    private void bankLoginFails(int status, String body) {
+        bank.stubFor(WireMock.post(urlPathEqualTo("/bank/login"))
+                .willReturn(aResponse().withStatus(status).withHeader("Content-Type", "text/plain").withBody(body)));
     }
 
     private void withdrawSucceeds(long phno) {
@@ -155,10 +165,14 @@ class PhonepeIntegrationTest {
     // ============ the app under test ============
 
     private String login(long phno) throws Exception {
-        String body = mockMvc.perform(post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":" + phno + "}"))
+        String body = mockMvc.perform(loginRequest(phno, PIN))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         return JsonPath.read(body, "$.token");
+    }
+
+    private static MockHttpServletRequestBuilder loginRequest(long phno, String pin) {
+        return post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":" + phno + ",\"pin\":\"" + pin + "\"}");
     }
 
     private MockHttpServletRequestBuilder as(String token, MockHttpServletRequestBuilder request) {
@@ -179,10 +193,13 @@ class PhonepeIntegrationTest {
     @Test
     void everyCallToTheBank_carriesTheConfiguredServiceKey() throws Exception {
         // Proves the key is really wired through (bank.service.api-key -> BankGateway -> the header), not just
-        // configured and silently unused - the Bank app now rejects any call missing this header.
+        // configured and silently unused - the Bank app now rejects any call missing this header. Login itself no
+        // longer needs it (POST /bank/login is public - the PIN check IS the credential), so profile is used here
+        // to exercise a call that still requires it.
         bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
-        withdrawSucceeds(ASHA);
-        login(ASHA);
+        String token = login(ASHA);
+
+        mockMvc.perform(as(token, get("/phonepe/profile"))).andExpect(status().isOk());
 
         bank.verify(getRequestedFor(urlPathEqualTo("/bank/displayuser")).withHeader("X-Service-Key", equalTo("test-service-key")));
     }
@@ -212,29 +229,42 @@ class PhonepeIntegrationTest {
         assertEquals(List.of(), bankCalls(), "an unauthenticated caller must never make this service call the bank");
     }
 
+    // The bank keeps this deliberately generic (same status/message for "no such phone" and "wrong PIN"), so an
+    // attacker cannot tell the two apart; PhonepayService must relay that as-is, not narrow it to a 404 the way
+    // it used to when login only ever looked the phone number up (which itself used to leak who was registered).
     @Test
-    void login_unknownUser_is404_notA500() throws Exception {
-        // The bank answers 400 "User not found"; the old code did not expect that and crashed with a 500.
-        bankHasNoUser(ASHA);
+    void login_wrongPinOrUnknownUser_is401_notA500() throws Exception {
+        bankLoginFails(401, "Invalid phone number or PIN");
 
-        mockMvc.perform(post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":9876543210}"))
-                .andExpect(status().isNotFound())
-                .andExpect(content().string("User not found"));
+        mockMvc.perform(loginRequest(ASHA, "0000"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().string("Invalid phone number or PIN"));
 
-        assertEquals(0, sessionRepository.count(), "no session for someone who does not exist");
+        assertEquals(0, sessionRepository.count(), "no session for a rejected login");
+    }
+
+    @Test
+    void login_accountLocked_is423() throws Exception {
+        bankLoginFails(423, "Too many failed attempts. Try again after 2026-09-24T10:15:00Z.");
+
+        mockMvc.perform(loginRequest(ASHA, PIN))
+                .andExpect(status().isLocked())
+                .andExpect(content().string("Too many failed attempts. Try again after 2026-09-24T10:15:00Z."));
+
+        assertEquals(0, sessionRepository.count(), "no session for a locked account");
     }
 
     @Test
     void login_whenTheBankIsDown_is503() throws Exception {
-        bank.stubFor(WireMock.get(urlPathEqualTo("/bank/displayuser")).willReturn(aResponse().withStatus(500)));
+        bank.stubFor(WireMock.post(urlPathEqualTo("/bank/login")).willReturn(aResponse().withStatus(500)));
 
-        mockMvc.perform(post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":9876543210}"))
+        mockMvc.perform(loginRequest(ASHA, PIN))
                 .andExpect(status().isServiceUnavailable());
     }
 
     @Test
     void login_invalidNumber_is400_andTheBankIsNotAsked() throws Exception {
-        mockMvc.perform(post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":5876543210}"))
+        mockMvc.perform(loginRequest(5876543210L, PIN))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().string("Invalid mobile number"));
 

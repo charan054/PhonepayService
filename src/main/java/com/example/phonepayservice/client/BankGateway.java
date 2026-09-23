@@ -1,11 +1,15 @@
 package com.example.phonepayservice.client;
 
+import com.example.phonepayservice.dto.BankLoginRequest;
+import com.example.phonepayservice.dto.BankLoginResult;
 import com.example.phonepayservice.dto.BankTransferRequest;
 import com.example.phonepayservice.dto.BankUser;
+import com.example.phonepayservice.exception.AccountLockedException;
 import com.example.phonepayservice.exception.BalanceException;
 import com.example.phonepayservice.exception.BankConflictException;
 import com.example.phonepayservice.exception.BankOutcomeUnknownException;
 import com.example.phonepayservice.exception.BankUnavailableException;
+import com.example.phonepayservice.exception.InvalidCredentialsException;
 import com.example.phonepayservice.exception.UserNotExistException;
 import feign.FeignException;
 import feign.RetryableException;
@@ -35,6 +39,31 @@ public class BankGateway {
     public BankGateway(BankClient bank, @Value("${bank.service.api-key}") String serviceKey) {
         this.bank = bank;
         this.serviceKey = serviceKey;
+    }
+
+    /**
+     * Verifies the PIN with the bank - the bank IS the source of truth for credentials, so a wrong PIN, an
+     * unknown phone number, or a locked account must all fail here, not just be waved through.
+     */
+    public BankLoginResult login(long phno, String pin) {
+        try {
+            return bank.login(new BankLoginRequest(phno, pin));
+        } catch (FeignException.Unauthorized e) {
+            throw new InvalidCredentialsException(orDefault(e.contentUTF8(), "Invalid phone number or PIN"));
+        } catch (FeignException.FeignClientException e) {
+            if (e.status() == 423) {
+                throw new AccountLockedException(orDefault(e.contentUTF8(), "Too many failed attempts. Please try again later."));
+            }
+            throw new BankUnavailableException("The bank service is unavailable. Please try again later.", e);
+        } catch (RetryableException e) {
+            throw new BankUnavailableException("The bank service is unavailable. Please try again later.", e);
+        } catch (FeignException e) {
+            throw new BankUnavailableException("The bank service is unavailable. Please try again later.", e);
+        }
+    }
+
+    private static String orDefault(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
     }
 
     /** Read-only, so any failure is simply "try again later". */

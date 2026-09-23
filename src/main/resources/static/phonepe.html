@@ -278,8 +278,9 @@
                 <h2>Login User</h2>
                 <span class="method">POST</span>
             </div>
-            <p>Login with your registered phone number. Your login is private to this browser tab.</p>
+            <p>Login with your registered phone number and bank PIN. Your login is private to this browser tab.</p>
             <input type="number" id="loginPhno" placeholder="Enter phone number">
+            <input type="password" id="loginPin" placeholder="PIN">
             <button class="purple" onclick="loginUser()">Login User</button>
         </div>
 
@@ -561,10 +562,12 @@
 
     async function loginUser() {
       const phno = document.getElementById("loginPhno").value;
-      if (!phno) return showStatus("Please enter phone number.", "error");
+      const pin = document.getElementById("loginPin").value;
+      if (!phno || !pin) return showStatus("Please enter phone number and PIN.", "error");
 
-      const data = await apiCall(`${BASE_URL}/login`, jsonRequest("POST", { phno: Number(phno) }));
+      const data = await apiCall(`${BASE_URL}/login`, jsonRequest("POST", { phno: Number(phno), pin }));
       storeSession(data.token, data.name);
+      document.getElementById("loginPin").value = "";
       showStatus(`Logged in as ${data.name}. Result opened in new tab.`, "success");
       // the token itself is never shown or printed
       openResultTab("Login User", { message: "Login completed successfully", name: data.name, phoneNumber: data.phno, sessionExpiresAt: data.expiresAt });
