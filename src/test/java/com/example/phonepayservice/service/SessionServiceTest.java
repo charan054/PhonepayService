@@ -167,4 +167,13 @@ class SessionServiceTest {
 
         verify(repository, never()).deleteByTokenHash(any());
     }
+
+    // ---------- purgeExpiredSessions (scheduled housekeeping) ----------
+
+    @Test
+    void purgeExpiredSessions_deletesEverythingExpiredAsOfNow() {
+        service.purgeExpiredSessions();
+
+        verify(repository).deleteByExpiresAtBefore(NOW);
+    }
 }
