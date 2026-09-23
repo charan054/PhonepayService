@@ -337,6 +337,8 @@
             <p>View the payments you sent and the money you received, newest first.</p>
             <input type="number" id="transactionsPage" placeholder="Page (default 0)" min="0" />
             <input type="number" id="transactionsSize" placeholder="Page size (default 20)" min="1" max="100" />
+            <input type="datetime-local" id="transactionsFrom" placeholder="From (optional)" />
+            <input type="datetime-local" id="transactionsTo" placeholder="To (optional)" />
             <button onclick="getMyTransactions()">View Transactions</button>
         </div>
 
@@ -620,8 +622,14 @@
       if (!requireLogin()) return;
       const page = document.getElementById("transactionsPage").value || 0;
       const size = document.getElementById("transactionsSize").value || 20;
+      const from = document.getElementById("transactionsFrom").value;
+      const to = document.getElementById("transactionsTo").value;
 
-      const data = await apiCall(`${BASE_URL}/transactions?page=${encodeURIComponent(page)}&size=${encodeURIComponent(size)}`);
+      let url = `${BASE_URL}/transactions?page=${encodeURIComponent(page)}&size=${encodeURIComponent(size)}`;
+      if (from) url += `&from=${encodeURIComponent(new Date(from).toISOString())}`;
+      if (to) url += `&to=${encodeURIComponent(new Date(to).toISOString())}`;
+
+      const data = await apiCall(url);
       showStatus("Transactions loaded successfully. Result opened in new tab.", "success");
       openResultTab("My Transactions", data.content, data);
     }
