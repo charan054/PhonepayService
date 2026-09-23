@@ -549,6 +549,39 @@ class PhonepeIntegrationTest {
     }
 
     @Test
+    void transactions_canBeFilteredByDateRange() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        withdrawSucceeds(ASHA);
+        String token = login(ASHA);
+        mockMvc.perform(as(token, post("/phonepe/makepayment")).contentType(MediaType.APPLICATION_JSON).content("{\"amount\":10}"))
+                .andExpect(status().isOk());
+
+        // backdate it well outside any date range a real caller would use "now"
+        Transaction stored = transactionRepository.findAll().get(0);
+        stored.setCreatedAt(Instant.parse("2020-01-01T00:00:00Z"));
+        transactionRepository.save(stored);
+
+        mockMvc.perform(as(token, get("/phonepe/transactions")).param("from", Instant.now().minusSeconds(60).toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(0));
+
+        mockMvc.perform(as(token, get("/phonepe/transactions")).param("from", "2019-01-01T00:00:00Z").param("to", "2021-01-01T00:00:00Z"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1));
+    }
+
+    @Test
+    void transactions_fromAfterTo_returns400() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        String token = login(ASHA);
+
+        mockMvc.perform(as(token, get("/phonepe/transactions"))
+                        .param("from", "2026-02-01T00:00:00Z").param("to", "2026-01-01T00:00:00Z"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("'from' must not be after 'to'."));
+    }
+
+    @Test
     void history_isPrivate_theReceiverSeesACredit_aStrangerSeesNothing() throws Exception {
         bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
         bankHasUser(RAVI, "RAVI SHARMA", 0.0);

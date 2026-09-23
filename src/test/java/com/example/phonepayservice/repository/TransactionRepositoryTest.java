@@ -101,7 +101,7 @@ class TransactionRepositoryTest {
         repository.save(newTransaction(100002, ASHA, null, "30"));    // Asha paid a bill
         flushAndClear();
 
-        Page<Transaction> history = repository.findVisibleTo(ASHA, newestFirst(0, 20));
+        Page<Transaction> history = repository.findVisibleTo(ASHA, null, null, newestFirst(0, 20));
 
         assertEquals(List.of(100002L, 100001L, 100000L), history.getContent().stream().map(Transaction::getTransactionId).toList());
     }
@@ -112,7 +112,7 @@ class TransactionRepositoryTest {
         repository.save(newTransaction(100001, RAVI, MEENA, "20"));   // nothing to do with Asha
         flushAndClear();
 
-        Page<Transaction> history = repository.findVisibleTo(ASHA, newestFirst(0, 20));
+        Page<Transaction> history = repository.findVisibleTo(ASHA, null, null, newestFirst(0, 20));
 
         assertEquals(List.of(100000L), history.getContent().stream().map(Transaction::getTransactionId).toList());
     }
@@ -122,7 +122,7 @@ class TransactionRepositoryTest {
         repository.save(newTransaction(100000, ASHA, RAVI, "10"));
         flushAndClear();
 
-        assertTrue(repository.findVisibleTo(MEENA, newestFirst(0, 20)).isEmpty());
+        assertTrue(repository.findVisibleTo(MEENA, null, null, newestFirst(0, 20)).isEmpty());
     }
 
     @Test
@@ -132,9 +132,9 @@ class TransactionRepositoryTest {
         repository.save(pending);
         flushAndClear();
 
-        assertEquals(List.of(100000L), repository.findVisibleTo(ASHA, newestFirst(0, 20))
+        assertEquals(List.of(100000L), repository.findVisibleTo(ASHA, null, null, newestFirst(0, 20))
                 .getContent().stream().map(Transaction::getTransactionId).toList());
-        assertTrue(repository.findVisibleTo(RAVI, newestFirst(0, 20)).isEmpty(), "the money may never have reached Ravi");
+        assertTrue(repository.findVisibleTo(RAVI, null, null, newestFirst(0, 20)).isEmpty(), "the money may never have reached Ravi");
     }
 
     @Test
@@ -144,13 +144,55 @@ class TransactionRepositoryTest {
         }
         flushAndClear();
 
-        Page<Transaction> firstPage = repository.findVisibleTo(ASHA, newestFirst(0, 2));
-        Page<Transaction> secondPage = repository.findVisibleTo(ASHA, newestFirst(1, 2));
+        Page<Transaction> firstPage = repository.findVisibleTo(ASHA, null, null, newestFirst(0, 2));
+        Page<Transaction> secondPage = repository.findVisibleTo(ASHA, null, null, newestFirst(1, 2));
 
         assertEquals(5, firstPage.getTotalElements());
         assertEquals(3, firstPage.getTotalPages());
         assertEquals(List.of(100004L, 100003L), firstPage.getContent().stream().map(Transaction::getTransactionId).toList());
         assertEquals(List.of(100002L, 100001L), secondPage.getContent().stream().map(Transaction::getTransactionId).toList());
+    }
+
+    // ---------- optional date-range filter ----------
+
+    @Test
+    void findVisibleTo_filtersByCreatedAt_whenFromAndToAreGiven() {
+        Transaction early = newTransaction(100000, ASHA, RAVI, "10");
+        early.setCreatedAt(Instant.parse("2026-01-01T00:00:00Z"));
+        Transaction inRange = newTransaction(100001, ASHA, RAVI, "10");
+        inRange.setCreatedAt(Instant.parse("2026-01-15T00:00:00Z"));
+        Transaction late = newTransaction(100002, ASHA, RAVI, "10");
+        late.setCreatedAt(Instant.parse("2026-02-01T00:00:00Z"));
+        repository.save(early);
+        repository.save(inRange);
+        repository.save(late);
+        flushAndClear();
+
+        Page<Transaction> filtered = repository.findVisibleTo(ASHA,
+                Instant.parse("2026-01-10T00:00:00Z"), Instant.parse("2026-01-20T00:00:00Z"), newestFirst(0, 20));
+
+        assertEquals(List.of(100001L), filtered.getContent().stream().map(Transaction::getTransactionId).toList());
+    }
+
+    @Test
+    void findVisibleTo_fromAndToAreInclusive() {
+        Transaction t = newTransaction(100000, ASHA, RAVI, "10");
+        Instant exact = Instant.parse("2026-01-15T00:00:00Z");
+        t.setCreatedAt(exact);
+        repository.save(t);
+        flushAndClear();
+
+        assertEquals(1, repository.findVisibleTo(ASHA, exact, exact, newestFirst(0, 20)).getTotalElements());
+    }
+
+    @Test
+    void findVisibleTo_noDateRange_returnsEverything() {
+        Transaction t = newTransaction(100000, ASHA, RAVI, "10");
+        t.setCreatedAt(Instant.parse("2020-01-01T00:00:00Z"));   // long before "now"
+        repository.save(t);
+        flushAndClear();
+
+        assertEquals(1, repository.findVisibleTo(ASHA, null, null, newestFirst(0, 20)).getTotalElements());
     }
 
     // ---------- what is stored ----------

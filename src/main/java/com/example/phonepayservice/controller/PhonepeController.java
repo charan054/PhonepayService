@@ -23,6 +23,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Instant;
+
 /**
  * Every endpoint except /login needs "Authorization: Bearer <token>". The caller's phone number comes from that token
  * (see AuthInterceptor), never from a request parameter, so nobody can act as or look up somebody else.
@@ -72,8 +74,10 @@ public class PhonepeController {
     @GetMapping("/transactions")
     public PageResponse<TransactionResponse> transactions(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
                           @RequestParam(defaultValue = "0") int page,
-                          @RequestParam(defaultValue = "" + PhonepeService.DEFAULT_PAGE_SIZE) int size) {
-        return phonepeService.transactionsOf(caller, page, size).map(t -> TransactionResponse.from(t, caller));
+                          @RequestParam(defaultValue = "" + PhonepeService.DEFAULT_PAGE_SIZE) int size,
+                          @RequestParam(required = false) Instant from,
+                          @RequestParam(required = false) Instant to) {
+        return phonepeService.transactionsOf(caller, page, size, from, to).map(t -> TransactionResponse.from(t, caller));
     }
 
     @GetMapping("/transactions/{transactionId}")
