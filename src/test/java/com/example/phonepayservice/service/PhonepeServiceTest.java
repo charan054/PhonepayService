@@ -4,6 +4,7 @@ import com.example.phonepayservice.client.BankGateway;
 import com.example.phonepayservice.dto.BalanceResponse;
 import com.example.phonepayservice.dto.BankUser;
 import com.example.phonepayservice.dto.LoginResponse;
+import com.example.phonepayservice.dto.PageResponse;
 import com.example.phonepayservice.dto.ProfileResponse;
 import com.example.phonepayservice.entity.Transaction;
 import com.example.phonepayservice.entity.TransactionStatus;
@@ -21,10 +22,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -417,20 +422,36 @@ class PhonepeServiceTest {
 
     // ============ history: people only ever see their own money ============
 
+    // The visibility rule itself (a receiver never sees an unfinished payment) now lives in the repository query
+    // (TransactionRepository.findVisibleTo) and is tested there; this service just wires page/size into a Pageable.
     @Test
-    void transactionsOf_showsWhatThePersonPaidAndWhatReallyReachedThem() {
-        when(transactions.findByPhnoOrReceiverPhnoOrderByIdDesc(RECEIVER, RECEIVER)).thenReturn(List.of(
-                row(1, RECEIVER, STRANGER, TransactionStatus.PENDING),               // their own payment: visible
-                row(2, RECEIVER, STRANGER, TransactionStatus.FAILED),                // their own failed payment: visible
-                row(3, PAYER, RECEIVER, TransactionStatus.FAILED),                   // someone's failed payment to them: hidden
-                row(4, PAYER, RECEIVER, TransactionStatus.NEEDS_RECONCILIATION),     // still being settled: hidden
-                row(5, PAYER, RECEIVER, TransactionStatus.PENDING),                  // not finished: hidden
-                row(6, PAYER, RECEIVER, TransactionStatus.COMPLETED),                // money that reached them: visible
-                row(7, PAYER, RECEIVER, null)));                                     // older row from before statuses existed: visible
+    void transactionsOf_asksTheRepositoryForANewestFirstPage() {
+        when(transactions.findVisibleTo(eq(RECEIVER), any())).thenReturn(new PageImpl<>(List.of(
+                row(1, PAYER, RECEIVER, TransactionStatus.COMPLETED))));
 
-        List<Long> visible = service.transactionsOf(RECEIVER).stream().map(Transaction::getTransactionId).toList();
+        PageResponse<Transaction> result = service.transactionsOf(RECEIVER, 0, 20);
 
-        assertEquals(List.of(1L, 2L, 6L, 7L), visible);
+        assertEquals(List.of(1L), result.content().stream().map(Transaction::getTransactionId).toList());
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        verify(transactions).findVisibleTo(eq(RECEIVER), pageable.capture());
+        assertEquals(0, pageable.getValue().getPageNumber());
+        assertEquals(20, pageable.getValue().getPageSize());
+        assertEquals(Sort.by("id").descending(), pageable.getValue().getSort());
+    }
+
+    @Test
+    void transactionsOf_negativePage_throwsInvalidRequest() {
+        assertThrows(InvalidRequestException.class, () -> service.transactionsOf(RECEIVER, -1, 20));
+
+        verifyNoInteractions(transactions);
+    }
+
+    @Test
+    void transactionsOf_sizeOutOfRange_throwsInvalidRequest() {
+        assertThrows(InvalidRequestException.class, () -> service.transactionsOf(RECEIVER, 0, 0));
+        assertThrows(InvalidRequestException.class, () -> service.transactionsOf(RECEIVER, 0, PhonepeService.MAX_PAGE_SIZE + 1));
+
+        verifyNoInteractions(transactions);
     }
 
     @Test

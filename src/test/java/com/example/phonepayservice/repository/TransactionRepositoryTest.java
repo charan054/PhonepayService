@@ -8,6 +8,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.math.BigDecimal;
@@ -49,6 +52,10 @@ class TransactionRepositoryTest {
     private void flushAndClear() {
         entityManager.flush();
         entityManager.clear();
+    }
+
+    private static PageRequest newestFirst(int page, int size) {
+        return PageRequest.of(page, size, Sort.by("id").descending());
     }
 
     // ---------- transaction numbers ----------
@@ -94,9 +101,9 @@ class TransactionRepositoryTest {
         repository.save(newTransaction(100002, ASHA, null, "30"));    // Asha paid a bill
         flushAndClear();
 
-        List<Transaction> history = repository.findByPhnoOrReceiverPhnoOrderByIdDesc(ASHA, ASHA);
+        Page<Transaction> history = repository.findVisibleTo(ASHA, newestFirst(0, 20));
 
-        assertEquals(List.of(100002L, 100001L, 100000L), history.stream().map(Transaction::getTransactionId).toList());
+        assertEquals(List.of(100002L, 100001L, 100000L), history.getContent().stream().map(Transaction::getTransactionId).toList());
     }
 
     @Test
@@ -105,9 +112,9 @@ class TransactionRepositoryTest {
         repository.save(newTransaction(100001, RAVI, MEENA, "20"));   // nothing to do with Asha
         flushAndClear();
 
-        List<Transaction> history = repository.findByPhnoOrReceiverPhnoOrderByIdDesc(ASHA, ASHA);
+        Page<Transaction> history = repository.findVisibleTo(ASHA, newestFirst(0, 20));
 
-        assertEquals(List.of(100000L), history.stream().map(Transaction::getTransactionId).toList());
+        assertEquals(List.of(100000L), history.getContent().stream().map(Transaction::getTransactionId).toList());
     }
 
     @Test
@@ -115,7 +122,35 @@ class TransactionRepositoryTest {
         repository.save(newTransaction(100000, ASHA, RAVI, "10"));
         flushAndClear();
 
-        assertTrue(repository.findByPhnoOrReceiverPhnoOrderByIdDesc(MEENA, MEENA).isEmpty());
+        assertTrue(repository.findVisibleTo(MEENA, newestFirst(0, 20)).isEmpty());
+    }
+
+    @Test
+    void history_hidesAnUnfinishedPaymentFromItsReceiver_butNotFromItsPayer() {
+        Transaction pending = newTransaction(100000, ASHA, RAVI, "10");
+        pending.setStatus(TransactionStatus.NEEDS_RECONCILIATION);
+        repository.save(pending);
+        flushAndClear();
+
+        assertEquals(List.of(100000L), repository.findVisibleTo(ASHA, newestFirst(0, 20))
+                .getContent().stream().map(Transaction::getTransactionId).toList());
+        assertTrue(repository.findVisibleTo(RAVI, newestFirst(0, 20)).isEmpty(), "the money may never have reached Ravi");
+    }
+
+    @Test
+    void history_isPaginated() {
+        for (long id = 100000; id < 100005; id++) {
+            repository.save(newTransaction(id, ASHA, RAVI, "10"));
+        }
+        flushAndClear();
+
+        Page<Transaction> firstPage = repository.findVisibleTo(ASHA, newestFirst(0, 2));
+        Page<Transaction> secondPage = repository.findVisibleTo(ASHA, newestFirst(1, 2));
+
+        assertEquals(5, firstPage.getTotalElements());
+        assertEquals(3, firstPage.getTotalPages());
+        assertEquals(List.of(100004L, 100003L), firstPage.getContent().stream().map(Transaction::getTransactionId).toList());
+        assertEquals(List.of(100002L, 100001L), secondPage.getContent().stream().map(Transaction::getTransactionId).toList());
     }
 
     // ---------- what is stored ----------

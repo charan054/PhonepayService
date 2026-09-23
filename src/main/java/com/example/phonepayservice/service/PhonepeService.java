@@ -4,6 +4,7 @@ import com.example.phonepayservice.client.BankGateway;
 import com.example.phonepayservice.dto.BalanceResponse;
 import com.example.phonepayservice.dto.BankUser;
 import com.example.phonepayservice.dto.LoginResponse;
+import com.example.phonepayservice.dto.PageResponse;
 import com.example.phonepayservice.dto.ProfileResponse;
 import com.example.phonepayservice.entity.Transaction;
 import com.example.phonepayservice.entity.TransactionStatus;
@@ -16,6 +17,9 @@ import com.example.phonepayservice.repository.TransactionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -35,6 +39,8 @@ public class PhonepeService {
     static final long FIRST_TRANSACTION_ID = 100000;
     private static final int MAX_ID_ATTEMPTS = 5;
     private static final int MAX_TRANSFER_ATTEMPTS = 3;
+    public static final int DEFAULT_PAGE_SIZE = 20;
+    public static final int MAX_PAGE_SIZE = 100;
 
     private final BankGateway bank;
     private final SessionService sessions;
@@ -99,10 +105,16 @@ public class PhonepeService {
     // ---------- history ----------
 
     /** Everything this person paid, plus completed payments they received. Newest first. */
-    public List<Transaction> transactionsOf(long viewer) {
-        return transactions.findByPhnoOrReceiverPhnoOrderByIdDesc(viewer, viewer).stream()
-                .filter(t -> visibleTo(t, viewer))
-                .toList();
+    public PageResponse<Transaction> transactionsOf(long viewer, int page, int size) {
+        return PageResponse.of(transactions.findVisibleTo(viewer, pageable(page, size)));
+    }
+
+    // page/size come straight from a query parameter, so out-of-range values are a caller mistake, not a crash.
+    private Pageable pageable(int page, int size) {
+        if (page < 0 || size < 1 || size > MAX_PAGE_SIZE) {
+            throw new InvalidRequestException("page must be 0 or more, and size must be between 1 and " + MAX_PAGE_SIZE + ".");
+        }
+        return PageRequest.of(page, size, Sort.by("id").descending());
     }
 
     /** A transaction is only ever shown to the people in it; anyone else gets "not found". */
