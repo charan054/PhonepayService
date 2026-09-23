@@ -27,4 +27,8 @@ public class Transaction {
     private TransactionStatus status;
     private String failureReason;
     private Instant createdAt;
+    // What the payer said this was for, e.g. "rent" or "movie tickets". Optional; null for older rows and for
+    // any payment made without one.
+    @Column(length = 140)
+    private String note;
 }
