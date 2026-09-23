@@ -2,6 +2,7 @@ package com.example.phonepayservice.service;
 
 import com.example.phonepayservice.client.BankGateway;
 import com.example.phonepayservice.dto.BalanceResponse;
+import com.example.phonepayservice.dto.BankLoginResult;
 import com.example.phonepayservice.dto.BankUser;
 import com.example.phonepayservice.dto.LoginResponse;
 import com.example.phonepayservice.dto.PageResponse;
@@ -57,11 +58,12 @@ public class PhonepeService {
 
     // ---------- login ----------
 
-    public LoginResponse login(long phno) {
+    public LoginResponse login(long phno, String pin) {
         requireValidPhone(phno);
-        BankUser user = bank.findUser(phno);
+        // The bank IS the credential check: it verifies the PIN and tells us the account's real name.
+        BankLoginResult verified = bank.login(phno, pin);
         SessionService.IssuedSession session = sessions.start(phno);
-        return new LoginResponse(session.token(), session.expiresAt(), phno, user.getName());
+        return new LoginResponse(session.token(), session.expiresAt(), phno, verified.getName());
     }
 
     public void logout(String token) {

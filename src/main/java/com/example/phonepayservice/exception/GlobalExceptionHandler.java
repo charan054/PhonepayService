@@ -26,6 +26,17 @@ public class GlobalExceptionHandler {
         return reply(HttpStatus.NOT_FOUND, e.getMessage());
     }
 
+    // wrong PIN, or no such phone number - see InvalidCredentialsException
+    @ExceptionHandler(InvalidCredentialsException.class)
+    public ResponseEntity<String> handleInvalidCredentials(InvalidCredentialsException e) {
+        return reply(HttpStatus.UNAUTHORIZED, e.getMessage());
+    }
+
+    @ExceptionHandler(AccountLockedException.class)
+    public ResponseEntity<String> handleAccountLocked(AccountLockedException e) {
+        return reply(HttpStatus.LOCKED, e.getMessage());
+    }
+
     @ExceptionHandler(TransactionNotFoundException.class)
     public ResponseEntity<String> handleTransactionNotFound(TransactionNotFoundException e) {
         return reply(HttpStatus.NOT_FOUND, e.getMessage());
