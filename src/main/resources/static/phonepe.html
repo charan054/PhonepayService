@@ -301,6 +301,7 @@
             </div>
             <p>Perform merchant payments instantly.</p>
             <input type="number" id="paymentAmount" placeholder="Payment amount" min="0.01" step="0.01">
+            <input type="text" id="paymentNote" placeholder="Note (optional, e.g. movie tickets)" maxlength="140">
             <button class="green" onclick="makePayment()">Make Payment</button>
         </div>
 
@@ -313,6 +314,7 @@
             <p>Transfer money securely to another CharanPe bank.</p>
             <input type="number" id="sendPhno" placeholder="Receiver phone number">
             <input type="number" id="sendAmount" placeholder="Enter amount" min="0.01" step="0.01">
+            <input type="text" id="sendNote" placeholder="Note (optional, e.g. rent)" maxlength="140">
             <button class="green" onclick="sendMoney()">Send Money</button>
         </div>
 
@@ -586,10 +588,11 @@
       if (!requireLogin()) return;
       const phno = document.getElementById("sendPhno").value;
       const amount = document.getElementById("sendAmount").value;
+      const note = document.getElementById("sendNote").value;
 
       if (!phno || !amount) return showStatus("Please enter receiver phone number and amount.", "error");
 
-      const data = await apiCall(`${BASE_URL}/sendmoney`, jsonRequest("POST", { receiverPhno: Number(phno), amount: Number(amount) }));
+      const data = await apiCall(`${BASE_URL}/sendmoney`, jsonRequest("POST", { receiverPhno: Number(phno), amount: Number(amount), note: note || null }));
       showStatus("Money sent successfully. Result opened in new tab.", "success");
       openResultTab("Send Money", data);
     }
@@ -597,9 +600,10 @@
     async function makePayment() {
       if (!requireLogin()) return;
       const amount = document.getElementById("paymentAmount").value;
+      const note = document.getElementById("paymentNote").value;
       if (!amount) return showStatus("Please enter payment amount.", "error");
 
-      const data = await apiCall(`${BASE_URL}/makepayment`, jsonRequest("POST", { amount: Number(amount) }));
+      const data = await apiCall(`${BASE_URL}/makepayment`, jsonRequest("POST", { amount: Number(amount), note: note || null }));
       showStatus("Payment completed successfully. Result opened in new tab.", "success");
       openResultTab("Make Payment", data);
     }

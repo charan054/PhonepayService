@@ -329,6 +329,23 @@ class PhonepeIntegrationTest {
     }
 
     @Test
+    void sendMoney_storesAndReturnsTheNote() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        transferSucceeds();
+        String token = login(ASHA);
+
+        mockMvc.perform(as(token, post("/phonepe/sendmoney")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"receiverPhno\":" + RAVI + ",\"amount\":250,\"note\":\"rent\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.note").value("rent"));
+
+        assertEquals("rent", storedTransactions().get(0).getNote());
+
+        mockMvc.perform(as(token, get("/phonepe/transactions")))
+                .andExpect(jsonPath("$.content[0].note").value("rent"));
+    }
+
+    @Test
     void sendMoney_toAnUnknownNumber_neverTakesTheMoney() throws Exception {
         // The bank's transfer is atomic: if the receiver does not exist, the whole call fails with nothing moved.
         bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
@@ -434,6 +451,20 @@ class PhonepeIntegrationTest {
                 .andExpect(jsonPath("$.status").value("COMPLETED"));
 
         assertEquals(List.of(withdraw(ASHA, "99.5")), bankCalls());
+    }
+
+    @Test
+    void makePayment_storesAndReturnsTheNote() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        withdrawSucceeds(ASHA);
+        String token = login(ASHA);
+
+        mockMvc.perform(as(token, post("/phonepe/makepayment")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\":99.5,\"note\":\"movie tickets\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.note").value("movie tickets"));
+
+        assertEquals("movie tickets", storedTransactions().get(0).getNote());
     }
 
     @Test
