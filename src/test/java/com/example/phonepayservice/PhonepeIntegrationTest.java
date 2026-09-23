@@ -21,6 +21,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
@@ -56,10 +57,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * End to end: real controller, real service, real Feign client, real (in-memory) database.
  * Only the bank is fake: a WireMock server on a random port, so the real bank app on 8080 is never touched.
  */
+// Login and sendMoney are both rate-limited (see WebConfig); this suite legitimately calls them many times over
+// its run, from one simulated address and largely one simulated account, so it needs much higher budgets than
+// production traffic from one real address/account would ever need.
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.ANY)
+@TestPropertySource(properties = {
+        "phonepe.login.rate-limit.max-attempts=1000",
+        "phonepe.sendmoney.rate-limit.max-attempts=1000"
+})
 class PhonepeIntegrationTest {
 
     private static final long ASHA = 9876543210L;
