@@ -4,6 +4,7 @@ import com.example.phonepayservice.configuration.AuthInterceptor;
 import com.example.phonepayservice.dto.BalanceResponse;
 import com.example.phonepayservice.dto.LoginRequest;
 import com.example.phonepayservice.dto.LoginResponse;
+import com.example.phonepayservice.dto.PageResponse;
 import com.example.phonepayservice.dto.PaymentRequest;
 import com.example.phonepayservice.dto.ProfileResponse;
 import com.example.phonepayservice.dto.SendMoneyRequest;
@@ -18,10 +19,9 @@ import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
 
 /**
  * Every endpoint except /login needs "Authorization: Bearer <token>". The caller's phone number comes from that token
@@ -70,8 +70,10 @@ public class PhonepeController {
     }
 
     @GetMapping("/transactions")
-    public List<TransactionResponse> transactions(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller) {
-        return phonepeService.transactionsOf(caller).stream().map(t -> TransactionResponse.from(t, caller)).toList();
+    public PageResponse<TransactionResponse> transactions(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
+                          @RequestParam(defaultValue = "0") int page,
+                          @RequestParam(defaultValue = "" + PhonepeService.DEFAULT_PAGE_SIZE) int size) {
+        return phonepeService.transactionsOf(caller, page, size).map(t -> TransactionResponse.from(t, caller));
     }
 
     @GetMapping("/transactions/{transactionId}")

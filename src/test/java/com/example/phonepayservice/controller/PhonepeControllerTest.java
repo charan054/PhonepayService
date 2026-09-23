@@ -4,6 +4,7 @@ import com.example.phonepayservice.configuration.ClockConfig;
 import com.example.phonepayservice.configuration.WebConfig;
 import com.example.phonepayservice.dto.BalanceResponse;
 import com.example.phonepayservice.dto.LoginResponse;
+import com.example.phonepayservice.dto.PageResponse;
 import com.example.phonepayservice.dto.ProfileResponse;
 import com.example.phonepayservice.entity.Transaction;
 import com.example.phonepayservice.entity.TransactionStatus;
@@ -34,6 +35,7 @@ import java.time.Instant;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -88,6 +90,10 @@ class PhonepeControllerTest {
         t.setFailureReason("internal detail that must never reach the client");
         t.setCreatedAt(NOW);
         return t;
+    }
+
+    private static <T> PageResponse<T> pageOf(List<T> items) {
+        return new PageResponse<>(items, 0, items.size(), items.size(), 1);
     }
 
     // ============ authentication: every endpoint except /login needs a valid token ============
@@ -486,27 +492,46 @@ class PhonepeControllerTest {
 
     @Test
     void transactions_areShownFromTheCallersPointOfView() throws Exception {
-        when(phonepeService.transactionsOf(CALLER)).thenReturn(List.of(
+        when(phonepeService.transactionsOf(eq(CALLER), anyInt(), anyInt())).thenReturn(pageOf(List.of(
                 transaction(100002, RECEIVER, CALLER, TransactionStatus.COMPLETED),    // money the caller received
-                transaction(100001, CALLER, RECEIVER, TransactionStatus.COMPLETED)));  // money the caller sent
+                transaction(100001, CALLER, RECEIVER, TransactionStatus.COMPLETED))));  // money the caller sent
 
         mockMvc.perform(asCaller(get("/phonepe/transactions")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2))
-                .andExpect(jsonPath("$[0].direction").value("CREDIT"))
-                .andExpect(jsonPath("$[1].direction").value("DEBIT"))
-                .andExpect(jsonPath("$[0].failureReason").doesNotExist());
+                .andExpect(jsonPath("$.content.length()").value(2))
+                .andExpect(jsonPath("$.content[0].direction").value("CREDIT"))
+                .andExpect(jsonPath("$.content[1].direction").value("DEBIT"))
+                .andExpect(jsonPath("$.content[0].failureReason").doesNotExist());
     }
 
     @Test
     void transactions_ignoreAnyPhoneNumberInTheRequest() throws Exception {
-        when(phonepeService.transactionsOf(CALLER)).thenReturn(List.of());
+        when(phonepeService.transactionsOf(eq(CALLER), anyInt(), anyInt())).thenReturn(pageOf(List.of()));
 
         mockMvc.perform(asCaller(get("/phonepe/transactions").param("phno", "9000000001")))
                 .andExpect(status().isOk());
 
-        verify(phonepeService).transactionsOf(CALLER);
-        verify(phonepeService, never()).transactionsOf(9000000001L);
+        verify(phonepeService).transactionsOf(eq(CALLER), anyInt(), anyInt());
+        verify(phonepeService, never()).transactionsOf(eq(9000000001L), anyInt(), anyInt());
+    }
+
+    @Test
+    void transactions_passesPageAndSizeThrough() throws Exception {
+        when(phonepeService.transactionsOf(CALLER, 2, 5)).thenReturn(pageOf(List.of()));
+
+        mockMvc.perform(asCaller(get("/phonepe/transactions")).param("page", "2").param("size", "5"))
+                .andExpect(status().isOk());
+
+        verify(phonepeService).transactionsOf(CALLER, 2, 5);
+    }
+
+    @Test
+    void transactions_defaultsToPageZeroAndTheDefaultSize() throws Exception {
+        when(phonepeService.transactionsOf(CALLER, 0, PhonepeService.DEFAULT_PAGE_SIZE)).thenReturn(pageOf(List.of()));
+
+        mockMvc.perform(asCaller(get("/phonepe/transactions"))).andExpect(status().isOk());
+
+        verify(phonepeService).transactionsOf(CALLER, 0, PhonepeService.DEFAULT_PAGE_SIZE);
     }
 
     @Test

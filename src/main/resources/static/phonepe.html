@@ -333,6 +333,8 @@
                 <span class="method">GET</span>
             </div>
             <p>View the payments you sent and the money you received, newest first.</p>
+            <input type="number" id="transactionsPage" placeholder="Page (default 0)" min="0" />
+            <input type="number" id="transactionsSize" placeholder="Page size (default 20)" min="1" max="100" />
             <button onclick="getMyTransactions()">View Transactions</button>
         </div>
 
@@ -453,7 +455,7 @@
       return valueHtml(value);
     }
 
-    function openResultTab(title, data) {
+    function openResultTab(title, data, meta) {
       const resultTab = window.open("about:blank", "_blank");
 
       if (!resultTab) {
@@ -534,7 +536,7 @@
           </div>
           <div class="summary">
             <h2>Result Table</h2>
-            <div class="count">${rows.length} record(s)</div>
+            <div class="count">${meta ? `${rows.length} of ${meta.totalElements} &middot; page ${meta.page + 1} of ${Math.max(meta.totalPages, 1)}` : `${rows.length} record(s)`}</div>
           </div>
           <main class="content">${tableHtml}</main>
           <div class="actions">
@@ -612,10 +614,12 @@
 
     async function getMyTransactions() {
       if (!requireLogin()) return;
+      const page = document.getElementById("transactionsPage").value || 0;
+      const size = document.getElementById("transactionsSize").value || 20;
 
-      const data = await apiCall(`${BASE_URL}/transactions`);
+      const data = await apiCall(`${BASE_URL}/transactions?page=${encodeURIComponent(page)}&size=${encodeURIComponent(size)}`);
       showStatus("Transactions loaded successfully. Result opened in new tab.", "success");
-      openResultTab("My Transactions", data);
+      openResultTab("My Transactions", data.content, data);
     }
 
     async function getTransactionById() {
