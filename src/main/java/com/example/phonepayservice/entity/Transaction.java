@@ -7,7 +7,10 @@ import java.math.BigDecimal;
 import java.time.Instant;
 
 @Entity
-@Table(name="transaction")
+@Table(name="transaction", indexes = {
+        @Index(name = "idx_transaction_phno", columnList = "phno"),
+        @Index(name = "idx_transaction_recieverno", columnList = "recieverno")
+})
 @Data
 public class Transaction {
     @Id
