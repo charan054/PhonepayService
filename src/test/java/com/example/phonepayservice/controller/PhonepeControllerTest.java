@@ -8,9 +8,11 @@ import com.example.phonepayservice.dto.PageResponse;
 import com.example.phonepayservice.dto.ProfileResponse;
 import com.example.phonepayservice.entity.Transaction;
 import com.example.phonepayservice.entity.TransactionStatus;
+import com.example.phonepayservice.exception.AccountLockedException;
 import com.example.phonepayservice.exception.BalanceException;
 import com.example.phonepayservice.exception.BankConflictException;
 import com.example.phonepayservice.exception.BankUnavailableException;
+import com.example.phonepayservice.exception.InvalidCredentialsException;
 import com.example.phonepayservice.exception.TransactionNotFoundException;
 import com.example.phonepayservice.exception.TransferFailedException;
 import com.example.phonepayservice.exception.UserNotExistException;
@@ -151,9 +153,9 @@ class PhonepeControllerTest {
 
     @Test
     void login_needsNoToken_andReturnsTheSessionToken() throws Exception {
-        when(phonepeService.login(CALLER)).thenReturn(new LoginResponse("abc123", NOW.plusSeconds(1800), CALLER, "KUMAR CHARAN"));
+        when(phonepeService.login(CALLER, "1234")).thenReturn(new LoginResponse("abc123", NOW.plusSeconds(1800), CALLER, "KUMAR CHARAN"));
 
-        mockMvc.perform(post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":9876543210}"))
+        mockMvc.perform(post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":9876543210,\"pin\":\"1234\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.token").value("abc123"))
                 .andExpect(jsonPath("$.name").value("KUMAR CHARAN"))
@@ -165,7 +167,7 @@ class PhonepeControllerTest {
     @ParameterizedTest
     @ValueSource(strings = {"5876543210", "987654321", "98765432101", "0"})
     void login_invalidPhoneNumber_returns400(String phno) throws Exception {
-        mockMvc.perform(post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":" + phno + "}"))
+        mockMvc.perform(post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":" + phno + ",\"pin\":\"1234\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().string("Invalid mobile number"));
 
@@ -174,9 +176,18 @@ class PhonepeControllerTest {
 
     @Test
     void login_missingPhoneNumber_returns400() throws Exception {
-        mockMvc.perform(post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mockMvc.perform(post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"pin\":\"1234\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().string("Phone number is required"));
+    }
+
+    @Test
+    void login_missingPin_returns400() throws Exception {
+        mockMvc.perform(post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":9876543210}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("PIN is required"));
+
+        verifyNoInteractions(phonepeService);
     }
 
     @Test
@@ -185,20 +196,32 @@ class PhonepeControllerTest {
                 .andExpect(status().isBadRequest());
     }
 
+    // The bank keeps this generic on purpose (wrong PIN and "no such phone" look identical), so this must not be
+    // narrowed to a 404 the way it used to be when login only ever looked the phone number up.
     @Test
-    void login_unknownUser_returns404() throws Exception {
-        when(phonepeService.login(CALLER)).thenThrow(new UserNotExistException("User not found"));
+    void login_wrongPinOrUnknownUser_returns401() throws Exception {
+        when(phonepeService.login(CALLER, "0000")).thenThrow(new InvalidCredentialsException("Invalid phone number or PIN"));
 
-        mockMvc.perform(post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":9876543210}"))
-                .andExpect(status().isNotFound())
-                .andExpect(content().string("User not found"));
+        mockMvc.perform(post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":9876543210,\"pin\":\"0000\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().string("Invalid phone number or PIN"));
+    }
+
+    @Test
+    void login_accountLocked_returns423() throws Exception {
+        when(phonepeService.login(CALLER, "1234"))
+                .thenThrow(new AccountLockedException("Too many failed attempts. Try again after 2026-09-23T10:15:00Z."));
+
+        mockMvc.perform(post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":9876543210,\"pin\":\"1234\"}"))
+                .andExpect(status().isLocked())
+                .andExpect(content().string("Too many failed attempts. Try again after 2026-09-23T10:15:00Z."));
     }
 
     @Test
     void login_bankDown_returns503() throws Exception {
-        when(phonepeService.login(CALLER)).thenThrow(new BankUnavailableException("The bank service is unavailable. Please try again later.", null));
+        when(phonepeService.login(CALLER, "1234")).thenThrow(new BankUnavailableException("The bank service is unavailable. Please try again later.", null));
 
-        mockMvc.perform(post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":9876543210}"))
+        mockMvc.perform(post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":9876543210,\"pin\":\"1234\"}"))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(content().string("The bank service is unavailable. Please try again later."));
     }
@@ -208,7 +231,7 @@ class PhonepeControllerTest {
     @Test
     @org.springframework.test.annotation.DirtiesContext(methodMode = org.springframework.test.annotation.DirtiesContext.MethodMode.AFTER_METHOD)
     void login_tooManyAttemptsFromTheSameAddress_is429() throws Exception {
-        when(phonepeService.login(CALLER)).thenReturn(new LoginResponse("abc123", NOW.plusSeconds(1800), CALLER, "KUMAR CHARAN"));
+        when(phonepeService.login(CALLER, "1234")).thenReturn(new LoginResponse("abc123", NOW.plusSeconds(1800), CALLER, "KUMAR CHARAN"));
 
         for (int i = 0; i < WebConfig.DEFAULT_MAX_LOGIN_ATTEMPTS_PER_ADDRESS; i++) {
             mockMvc.perform(loginRequest().with(fromAddress("203.0.113.5"))).andExpect(status().isOk());
@@ -222,7 +245,7 @@ class PhonepeControllerTest {
     @Test
     @org.springframework.test.annotation.DirtiesContext(methodMode = org.springframework.test.annotation.DirtiesContext.MethodMode.AFTER_METHOD)
     void login_rateLimitIsPerAddress_anotherAddressIsUnaffected() throws Exception {
-        when(phonepeService.login(CALLER)).thenReturn(new LoginResponse("abc123", NOW.plusSeconds(1800), CALLER, "KUMAR CHARAN"));
+        when(phonepeService.login(CALLER, "1234")).thenReturn(new LoginResponse("abc123", NOW.plusSeconds(1800), CALLER, "KUMAR CHARAN"));
 
         for (int i = 0; i < WebConfig.DEFAULT_MAX_LOGIN_ATTEMPTS_PER_ADDRESS; i++) {
             mockMvc.perform(loginRequest().with(fromAddress("203.0.113.5"))).andExpect(status().isOk());
@@ -233,7 +256,7 @@ class PhonepeControllerTest {
     }
 
     private static MockHttpServletRequestBuilder loginRequest() {
-        return post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":9876543210}");
+        return post("/phonepe/login").contentType(MediaType.APPLICATION_JSON).content("{\"phno\":9876543210,\"pin\":\"1234\"}");
     }
 
     private static org.springframework.test.web.servlet.request.RequestPostProcessor fromAddress(String ip) {

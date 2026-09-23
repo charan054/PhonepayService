@@ -40,7 +40,7 @@ public class PhonepeController {
 
     @PostMapping("/login")
     public LoginResponse login(@Valid @RequestBody LoginRequest request) {
-        return phonepeService.login(request.phno());
+        return phonepeService.login(request.phno(), request.pin());
     }
 
     @PostMapping("/logout")
