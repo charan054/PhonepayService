@@ -13,4 +13,7 @@ public interface UserSessionRepository extends JpaRepository<UserSession, Long> 
     long deleteByTokenHash(String tokenHash);
     // housekeeping: forget a person's sessions that have already expired
     long deleteByPhnoAndExpiresAtBefore(long phno, Instant cutoff);
+    // housekeeping: forget EVERY expired session, not just one person's - run periodically (see SessionService) so
+    // a session nobody ever logs into again isn't kept forever.
+    long deleteByExpiresAtBefore(Instant cutoff);
 }
