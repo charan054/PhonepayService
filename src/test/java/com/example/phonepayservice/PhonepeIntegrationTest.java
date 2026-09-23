@@ -40,7 +40,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.okForContentType;
 import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
-import static com.github.tomakehurst.wiremock.client.WireMock.putRequestedFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -65,6 +65,7 @@ class PhonepeIntegrationTest {
     private static final long ASHA = 9876543210L;
     private static final long RAVI = 9123456789L;
     private static final long MEENA = 9000000001L;
+    private static final String TRANSFER = "POST /bank/transfer";
 
     @RegisterExtension
     static WireMockExtension bank = WireMockExtension.newInstance()
@@ -112,13 +113,13 @@ class PhonepeIntegrationTest {
                 .willReturn(aResponse().withStatus(400).withHeader("Content-Type", "text/plain").withBody(reason)));
     }
 
-    private void depositSucceeds(long phno) {
-        bank.stubFor(WireMock.put(urlPathEqualTo("/bank/depositByphno")).withQueryParam("phno", equalTo("" + phno))
-                .willReturn(okForContentType("text/plain", "Deposit Successful")));
+    private void transferSucceeds() {
+        bank.stubFor(WireMock.post(urlPathEqualTo("/bank/transfer"))
+                .willReturn(okForContentType("text/plain", "Transfer Successful")));
     }
 
-    private void depositIsRefused(long phno, String reason) {
-        bank.stubFor(WireMock.put(urlPathEqualTo("/bank/depositByphno")).withQueryParam("phno", equalTo("" + phno))
+    private void transferIsRefused(String reason) {
+        bank.stubFor(WireMock.post(urlPathEqualTo("/bank/transfer"))
                 .willReturn(aResponse().withStatus(400).withHeader("Content-Type", "text/plain").withBody(reason)));
     }
 
@@ -129,16 +130,18 @@ class PhonepeIntegrationTest {
         return events.stream().map(e -> e.getRequest().getMethod() + " " + e.getRequest().getUrl()).toList();
     }
 
+    /** The JSON body of every POST /bank/transfer the fake bank has received, oldest first. */
+    private List<String> transferRequestBodies() {
+        List<ServeEvent> events = new ArrayList<>(bank.getAllServeEvents());
+        Collections.reverse(events);
+        return events.stream()
+                .filter(e -> e.getRequest().getUrl().equals("/bank/transfer"))
+                .map(e -> e.getRequest().getBodyAsString())
+                .toList();
+    }
+
     private static String withdraw(long phno, String amount) {
         return "PUT /bank/withdrawByphno?phno=" + phno + "&balance=" + amount;
-    }
-
-    private static String deposit(long phno, String amount) {
-        return "PUT /bank/depositByphno?phno=" + phno + "&balance=" + amount;
-    }
-
-    private static String lookup(long phno) {
-        return "GET /bank/displayuser?phno=" + phno;
     }
 
     // ============ the app under test ============
@@ -271,9 +274,7 @@ class PhonepeIntegrationTest {
         bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
         bankHasUser(RAVI, "RAVI SHARMA", 2000.0);
         bankHasUser(MEENA, "MEENA RAO", 3000.0);
-        withdrawSucceeds(ASHA);
-        withdrawSucceeds(RAVI);
-        depositSucceeds(MEENA);
+        transferSucceeds();
         String ashaToken = login(ASHA);
         String raviToken = login(RAVI);   // the LAST person to log in; the old code made everybody act as them
 
@@ -285,8 +286,9 @@ class PhonepeIntegrationTest {
         mockMvc.perform(send(ashaToken, MEENA, "100")).andExpect(status().isOk());
 
         // the money came out of ASHA's account, not out of RAVI's, even though RAVI logged in last
-        assertTrue(bankCalls().contains(withdraw(ASHA, "100.0")), bankCalls().toString());
-        bank.verify(0, putRequestedFor(urlPathEqualTo("/bank/withdrawByphno")).withQueryParam("phno", equalTo("" + RAVI)));
+        assertEquals(List.of(TRANSFER), bankCalls());
+        String body = transferRequestBodies().get(0);
+        assertEquals(ASHA, ((Number) JsonPath.read(body, "$.payerPhno")).longValue(), body);
         assertEquals(ASHA, storedTransactions().get(0).getPhno());
     }
 
@@ -295,9 +297,7 @@ class PhonepeIntegrationTest {
     @Test
     void sendMoney_takesFromThePayerThenGivesToTheReceiver_andRecordsIt() throws Exception {
         bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
-        bankHasUser(RAVI, "RAVI SHARMA", 0.0);
-        withdrawSucceeds(ASHA);
-        depositSucceeds(RAVI);
+        transferSucceeds();
         String token = login(ASHA);
         bank.resetRequests();
 
@@ -309,7 +309,11 @@ class PhonepeIntegrationTest {
                 .andExpect(jsonPath("$.amount").value(250.0))
                 .andExpect(jsonPath("$.receiverPhno").value(RAVI));
 
-        assertEquals(List.of(lookup(RAVI), withdraw(ASHA, "250.0"), deposit(RAVI, "250.0")), bankCalls());
+        assertEquals(List.of(TRANSFER), bankCalls());
+        String body = transferRequestBodies().get(0);
+        assertEquals(ASHA, ((Number) JsonPath.read(body, "$.payerPhno")).longValue(), body);
+        assertEquals(RAVI, ((Number) JsonPath.read(body, "$.receiverPhno")).longValue(), body);
+        assertEquals("phonepe-100000", JsonPath.read(body, "$.idempotencyKey"));
         Transaction stored = storedTransactions().get(0);
         assertEquals(TransactionStatus.COMPLETED, stored.getStatus());
         assertEquals("Transfer", stored.getMode());
@@ -318,10 +322,9 @@ class PhonepeIntegrationTest {
 
     @Test
     void sendMoney_toAnUnknownNumber_neverTakesTheMoney() throws Exception {
-        // The old code charged the sender first and only THEN discovered the receiver did not exist: the money vanished.
+        // The bank's transfer is atomic: if the receiver does not exist, the whole call fails with nothing moved.
         bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
-        bankHasNoUser(RAVI);
-        withdrawSucceeds(ASHA);
+        transferIsRefused("Receiver not found");
         String token = login(ASHA);
         bank.resetRequests();
 
@@ -329,8 +332,8 @@ class PhonepeIntegrationTest {
                 .andExpect(status().isNotFound())
                 .andExpect(content().string("User not found"));
 
-        assertEquals(List.of(lookup(RAVI)), bankCalls(), "no money may move");
-        assertEquals(0, transactionRepository.count());
+        assertEquals(List.of(TRANSFER), bankCalls(), "no money may move");
+        assertEquals(TransactionStatus.FAILED, storedTransactions().get(0).getStatus());
     }
 
     @Test
@@ -363,8 +366,7 @@ class PhonepeIntegrationTest {
     @Test
     void sendMoney_insufficientFunds_isRefused_andRecordedAsFailed() throws Exception {
         bankHasUser(ASHA, "ASHA KUMAR", 10.0);
-        bankHasUser(RAVI, "RAVI SHARMA", 0.0);
-        withdrawIsRefused(ASHA, "Insufficient Funds");
+        transferIsRefused("Insufficient Funds");
         String token = login(ASHA);
         bank.resetRequests();
 
@@ -372,55 +374,15 @@ class PhonepeIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(content().string("Insufficient Funds"));
 
-        assertEquals(List.of(lookup(RAVI), withdraw(ASHA, "250.0")), bankCalls(), "the receiver must not be credited");
+        assertEquals(List.of(TRANSFER), bankCalls());
         assertEquals(TransactionStatus.FAILED, storedTransactions().get(0).getStatus());
     }
 
     @Test
-    void sendMoney_receiverCannotBeCredited_payerGetsTheMoneyBack() throws Exception {
+    void sendMoney_bankStopsAnsweringDuringTheTransfer_nothingIsGuessed() throws Exception {
+        // The bank may or may not have completed the transfer. Guessing either way could create or destroy money.
         bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
-        bankHasUser(RAVI, "RAVI SHARMA", 0.0);
-        withdrawSucceeds(ASHA);
-        depositIsRefused(RAVI, "Amount too low");
-        depositSucceeds(ASHA);   // the refund
-        String token = login(ASHA);
-        bank.resetRequests();
-
-        mockMvc.perform(send(token, RAVI, "250"))
-                .andExpect(status().isBadGateway())
-                .andExpect(content().string("The transfer could not be completed. Your money has been returned."));
-
-        assertEquals(List.of(lookup(RAVI), withdraw(ASHA, "250.0"), deposit(RAVI, "250.0"), deposit(ASHA, "250.0")), bankCalls());
-        assertEquals(TransactionStatus.FAILED, storedTransactions().get(0).getStatus());
-    }
-
-    @Test
-    void sendMoney_receiverCannotBeCreditedAndTheRefundFailsToo_isFlaggedForAPerson() throws Exception {
-        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
-        bankHasUser(RAVI, "RAVI SHARMA", 0.0);
-        withdrawSucceeds(ASHA);
-        depositIsRefused(RAVI, "Amount too low");
-        bank.stubFor(WireMock.put(urlPathEqualTo("/bank/depositByphno")).withQueryParam("phno", equalTo("" + ASHA))
-                .willReturn(aResponse().withStatus(500)));
-        String token = login(ASHA);
-
-        mockMvc.perform(send(token, RAVI, "250"))
-                .andExpect(status().isBadGateway())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("could not return your money automatically")));
-
-        Transaction stored = storedTransactions().get(0);
-        assertEquals(TransactionStatus.NEEDS_RECONCILIATION, stored.getStatus());
-        assertTrue(stored.getFailureReason().contains("refund failed"), stored.getFailureReason());
-    }
-
-    @Test
-    void sendMoney_bankStopsAnsweringDuringTheWithdrawal_nothingIsGuessed() throws Exception {
-        // The bank may have taken the money or not. Refunding or paying the receiver now could create or destroy money.
-        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
-        bankHasUser(RAVI, "RAVI SHARMA", 0.0);
-        bank.stubFor(WireMock.put(urlPathEqualTo("/bank/withdrawByphno")).willReturn(aResponse().withStatus(200).withFixedDelay(4000)));
-        depositSucceeds(RAVI);
-        depositSucceeds(ASHA);
+        bank.stubFor(WireMock.post(urlPathEqualTo("/bank/transfer")).willReturn(aResponse().withStatus(200).withFixedDelay(4000)));
         String token = login(ASHA);
         bank.resetRequests();
 
@@ -428,38 +390,15 @@ class PhonepeIntegrationTest {
                 .andExpect(status().isBadGateway())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("could not confirm")));
 
-        assertEquals(List.of(lookup(RAVI), withdraw(ASHA, "250.0")), bankCalls(), "no deposit and no refund");
+        assertEquals(3, transferRequestBodies().size(), "every retry reused the same idempotency key, so 3 attempts can never move money twice");
         assertEquals(TransactionStatus.NEEDS_RECONCILIATION, storedTransactions().get(0).getStatus());
     }
 
     @Test
-    void sendMoney_connectionDropsDuringTheCredit_payerIsNotRefunded() throws Exception {
+    void sendMoney_connectionDropsDuringTheTransfer_nothingIsGuessed() throws Exception {
         bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
-        bankHasUser(RAVI, "RAVI SHARMA", 0.0);
-        withdrawSucceeds(ASHA);
-        bank.stubFor(WireMock.put(urlPathEqualTo("/bank/depositByphno")).withQueryParam("phno", equalTo("" + RAVI))
+        bank.stubFor(WireMock.post(urlPathEqualTo("/bank/transfer"))
                 .willReturn(aResponse().withFault(Fault.CONNECTION_RESET_BY_PEER)));
-        depositSucceeds(ASHA);
-        String token = login(ASHA);
-        bank.resetRequests();
-
-        mockMvc.perform(send(token, RAVI, "250"))
-                .andExpect(status().isBadGateway())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("could not confirm that the money reached the receiver")));
-
-        assertEquals(List.of(lookup(RAVI), withdraw(ASHA, "250.0"), deposit(RAVI, "250.0")), bankCalls(), "no refund, the receiver may already have the money");
-        assertEquals(TransactionStatus.NEEDS_RECONCILIATION, storedTransactions().get(0).getStatus());
-    }
-
-    @Test
-    void sendMoney_connectionDropsDuringTheWithdrawal_theWithdrawalIsSentOnlyOnce() throws Exception {
-        // The bank's withdraw subtracts every time it is called, so an automatic re-send could take the money twice.
-        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
-        bankHasUser(RAVI, "RAVI SHARMA", 0.0);
-        bank.stubFor(WireMock.put(urlPathEqualTo("/bank/withdrawByphno"))
-                .willReturn(aResponse().withFault(Fault.CONNECTION_RESET_BY_PEER)));
-        depositSucceeds(RAVI);
-        depositSucceeds(ASHA);
         String token = login(ASHA);
         bank.resetRequests();
 
@@ -467,7 +406,7 @@ class PhonepeIntegrationTest {
                 .andExpect(status().isBadGateway())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("could not confirm")));
 
-        assertEquals(List.of(lookup(RAVI), withdraw(ASHA, "250.0")), bankCalls(), "one withdrawal attempt, no re-send, no deposit, no refund");
+        assertEquals(3, transferRequestBodies().size());
         assertEquals(TransactionStatus.NEEDS_RECONCILIATION, storedTransactions().get(0).getStatus());
     }
 
@@ -500,15 +439,31 @@ class PhonepeIntegrationTest {
                 .andExpect(content().string("Insufficient Funds"));
     }
 
+    @Test
+    void makePayment_connectionDropsDuringTheWithdrawal_theWithdrawalIsSentOnlyOnce() throws Exception {
+        // The bank's withdraw subtracts every time it is called and has no idempotency key, so unlike transfer(),
+        // debit() must never retry - an automatic re-send here could take the money twice.
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        bank.stubFor(WireMock.put(urlPathEqualTo("/bank/withdrawByphno"))
+                .willReturn(aResponse().withFault(Fault.CONNECTION_RESET_BY_PEER)));
+        String token = login(ASHA);
+        bank.resetRequests();
+
+        mockMvc.perform(as(token, post("/phonepe/makepayment")).contentType(MediaType.APPLICATION_JSON).content("{\"amount\":250}"))
+                .andExpect(status().isBadGateway())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("could not confirm")));
+
+        assertEquals(List.of(withdraw(ASHA, "250.0")), bankCalls(), "one withdrawal attempt, no re-send");
+        assertEquals(TransactionStatus.NEEDS_RECONCILIATION, storedTransactions().get(0).getStatus());
+    }
+
     // ============ history: people only ever see their own money ============
 
     @Test
     void afterManyPayments_profileAndHistoryStillWork() throws Exception {
         // The old /profile threw an exception as soon as a user had made two payments.
         bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
-        bankHasUser(RAVI, "RAVI SHARMA", 0.0);
-        withdrawSucceeds(ASHA);
-        depositSucceeds(RAVI);
+        transferSucceeds();
         String token = login(ASHA);
         for (String amount : List.of("10", "20", "30")) {
             mockMvc.perform(send(token, RAVI, amount)).andExpect(status().isOk());
@@ -527,8 +482,7 @@ class PhonepeIntegrationTest {
         bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
         bankHasUser(RAVI, "RAVI SHARMA", 0.0);
         bankHasUser(MEENA, "MEENA RAO", 0.0);
-        withdrawSucceeds(ASHA);
-        depositSucceeds(RAVI);
+        transferSucceeds();
         String ashaToken = login(ASHA);
         String raviToken = login(RAVI);
         String meenaToken = login(MEENA);
@@ -563,9 +517,7 @@ class PhonepeIntegrationTest {
     @Test
     void simultaneousPayments_getUniqueTransactionNumbers_andEachMovesMoneyExactlyOnce() throws Exception {
         bankHasUser(ASHA, "ASHA KUMAR", 100000.0);
-        bankHasUser(RAVI, "RAVI SHARMA", 0.0);
-        withdrawSucceeds(ASHA);
-        depositSucceeds(RAVI);
+        transferSucceeds();
         String token = login(ASHA);
         bank.resetRequests();
 
@@ -600,9 +552,8 @@ class PhonepeIntegrationTest {
         assertEquals(succeeded, stored.size(), "one row per successful payment, none for the refused ones");
         assertEquals(succeeded, stored.stream().map(Transaction::getTransactionId).distinct().count(), "every transaction number is unique");
         assertTrue(stored.stream().allMatch(t -> t.getStatus() == TransactionStatus.COMPLETED));
-        // each successful payment moved money exactly once; each refused one moved nothing
-        bank.verify((int) succeeded, putRequestedFor(urlPathEqualTo("/bank/withdrawByphno")));
-        bank.verify((int) succeeded, putRequestedFor(urlPathEqualTo("/bank/depositByphno")));
+        // each successful payment moved money exactly once
+        bank.verify((int) succeeded, postRequestedFor(urlPathEqualTo("/bank/transfer")));
     }
 
     // ============ operations ============
