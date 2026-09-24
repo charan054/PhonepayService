@@ -736,13 +736,15 @@ class PhonepeIntegrationTest {
     @Test
     void savePayee_thenListIt() throws Exception {
         bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        bankHasUser(RAVI, "RAVI KUMAR", 500.0);
         String token = login(ASHA);
 
         mockMvc.perform(as(token, post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"payeePhno\":" + RAVI + ",\"nickname\":\"Ravi\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.payeePhno").value(RAVI))
-                .andExpect(jsonPath("$.nickname").value("Ravi"));
+                .andExpect(jsonPath("$.nickname").value("Ravi"))
+                .andExpect(jsonPath("$.payeeName").value("RAVI KUMAR"));
 
         mockMvc.perform(as(token, get("/phonepe/payees")))
                 .andExpect(status().isOk())
@@ -751,8 +753,25 @@ class PhonepeIntegrationTest {
     }
 
     @Test
+    void savePayee_bankDoesNotRecognizeTheNumber_returns404_andSavesNothing() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        bank.stubFor(WireMock.get(urlPathEqualTo("/bank/displayuser")).withQueryParam("phno", equalTo("" + RAVI))
+                .willReturn(aResponse().withStatus(400).withHeader("Content-Type", "text/plain").withBody("User not found")));
+        String token = login(ASHA);
+
+        mockMvc.perform(as(token, post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payeePhno\":" + RAVI + ",\"nickname\":\"Ravi\"}"))
+                .andExpect(status().isNotFound())
+                .andExpect(content().string("User not found"));
+
+        mockMvc.perform(as(token, get("/phonepe/payees")))
+                .andExpect(content().string("[]"));
+    }
+
+    @Test
     void savePayee_sameNumberAgain_updatesTheNickname_insteadOfDuplicating() throws Exception {
         bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        bankHasUser(RAVI, "RAVI KUMAR", 500.0);
         String token = login(ASHA);
         mockMvc.perform(as(token, post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"payeePhno\":" + RAVI + ",\"nickname\":\"Old name\"}"))
@@ -772,6 +791,7 @@ class PhonepeIntegrationTest {
     void savedPayees_areNeverVisibleToAnotherAccount() throws Exception {
         bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
         bankHasUser(MEENA, "MEENA RAO", 3000.0);
+        bankHasUser(RAVI, "RAVI KUMAR", 500.0);
         String ashaToken = login(ASHA);
         String meenaToken = login(MEENA);
         mockMvc.perform(as(ashaToken, post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
@@ -797,6 +817,7 @@ class PhonepeIntegrationTest {
     @Test
     void deletePayee_removesIt() throws Exception {
         bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        bankHasUser(RAVI, "RAVI KUMAR", 500.0);
         String token = login(ASHA);
         mockMvc.perform(as(token, post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"payeePhno\":" + RAVI + ",\"nickname\":\"Ravi\"}"))
