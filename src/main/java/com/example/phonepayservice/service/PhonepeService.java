@@ -252,8 +252,8 @@ public class PhonepeService {
         return amount.setScale(2, RoundingMode.UNNECESSARY);
     }
 
-    private static BigDecimal money(double value) {
-        return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP);
+    private static BigDecimal money(BigDecimal value) {
+        return value.setScale(2, RoundingMode.HALF_UP);
     }
 
     // keep phone numbers out of the logs
