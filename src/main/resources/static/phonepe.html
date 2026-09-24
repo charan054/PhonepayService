@@ -289,6 +289,58 @@
           white-space:nowrap;
         }
 
+        .tx-list{
+          margin-top:12px;
+          display:flex;
+          flex-direction:column;
+          gap:8px;
+        }
+
+        .tx-row{
+          background:#f0f9ff;
+          border:1px solid var(--border);
+          border-radius:12px;
+          padding:10px 12px;
+        }
+
+        .tx-row-top{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:10px;
+        }
+
+        .tx-amount{
+          font-weight:900;
+          font-size:14px;
+        }
+        .tx-amount.debit{color:var(--danger)}
+        .tx-amount.credit{color:var(--success)}
+
+        .tx-row-meta{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:10px;
+          margin-top:6px;
+          font-size:12px;
+          color:var(--muted);
+          font-weight:700;
+        }
+
+        .tx-note{
+          margin-top:6px;
+          font-size:12px;
+          color:var(--muted);
+          font-style:italic;
+        }
+
+        .tx-empty{
+          color:var(--muted);
+          font-size:14px;
+          font-weight:700;
+        }
+
         .status-badge{
           display:inline-block;
           padding:4px 10px;
@@ -408,6 +460,7 @@
                 <span id="transactionsPageLabel" class="pager-label"></span>
                 <button type="button" class="pager-btn" id="transactionsNextBtn" onclick="changeTransactionsPage(1)" disabled>Next &rsaquo;</button>
             </div>
+            <div id="transactionsList" class="tx-list"></div>
         </div>
 
         <div class="card">
@@ -419,6 +472,7 @@
             <p>Find one of your transactions using its transaction id.</p>
             <input type="number" id="transactionId" placeholder="Enter transaction ID">
             <button onclick="getTransactionById()">Search By ID</button>
+            <div id="transactionByIdResult" class="tx-list"></div>
         </div>
 
         <div class="card">
@@ -799,8 +853,7 @@
       const data = await apiCall(url);
       transactionsPage = data.page;
       updateTransactionsPager(data);
-      showStatus("Transactions loaded successfully. Result opened in new tab.", "success");
-      openResultTab("My Transactions", data.content, data);
+      renderTransactionList("transactionsList", data.content);
     }
 
     function updateTransactionsPager(data) {
@@ -808,6 +861,42 @@
       document.getElementById("transactionsPageLabel").textContent = `Page ${data.page + 1} of ${totalPages}`;
       document.getElementById("transactionsPrevBtn").disabled = data.page <= 0;
       document.getElementById("transactionsNextBtn").disabled = data.page + 1 >= totalPages;
+    }
+
+    function formatDate(iso) {
+      try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
+    }
+
+    // Every field on a transaction is already visible to its own payer/receiver (see TransactionResponse's
+    // javadoc - internal details like failure reasons are never sent down), so a row already shows everything
+    // there is to show; there is no separate "detail view" to expand into.
+    function renderTransactionRow(t) {
+      const isDebit = t.direction === "DEBIT";
+      const counterparty = isDebit ? t.receiverPhno : t.payerPhno;
+      const counterpartyLabel = counterparty ? `${isDebit ? "To" : "From"} ${counterparty}` : (isDebit ? "Payment" : "-");
+      const statusClass = "status-" + String(t.status).toLowerCase();
+      return `
+        <div class="tx-row">
+          <div class="tx-row-top">
+            <span class="tx-amount ${isDebit ? "debit" : "credit"}">${isDebit ? "-" : "+"}${escapeHtml(String(t.amount))}</span>
+            <span class="status-badge ${statusClass}">${escapeHtml(t.status)}</span>
+          </div>
+          <div class="tx-row-meta">
+            <span>${escapeHtml(t.mode)} &middot; ${escapeHtml(counterpartyLabel)}</span>
+            <span>${escapeHtml(formatDate(t.createdAt))}</span>
+          </div>
+          ${t.note ? `<div class="tx-note">${escapeHtml(t.note)}</div>` : ""}
+        </div>
+      `;
+    }
+
+    function renderTransactionList(containerId, transactions) {
+      const container = document.getElementById(containerId);
+      if (!transactions || transactions.length === 0) {
+        container.innerHTML = `<div class="tx-empty">No transactions found.</div>`;
+        return;
+      }
+      container.innerHTML = transactions.map(renderTransactionRow).join("");
     }
 
     async function savePayee() {
@@ -846,8 +935,7 @@
       if (!transactionId) return showStatus("Please enter transaction ID.", "error");
 
       const data = await apiCall(`${BASE_URL}/transactions/${encodeURIComponent(transactionId)}`);
-      showStatus("Transaction loaded successfully. Result opened in new tab.", "success");
-      openResultTab("Transaction By ID", data);
+      renderTransactionList("transactionByIdResult", [data]);
     }
 
     updateSessionBar();
