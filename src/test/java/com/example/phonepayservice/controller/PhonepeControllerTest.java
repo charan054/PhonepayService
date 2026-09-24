@@ -474,10 +474,11 @@ class PhonepeControllerTest {
                 .andExpect(status().isServiceUnavailable());
     }
 
-    // ============ POST /phonepe/sendmoney: rate limiting per account ============
+    // ============ POST /phonepe/sendmoney, /phonepe/makepayment: rate limiting per account ============
 
-    // Uses its own token/account, never CALLER's, so this test's budget never mixes with the many sendMoney
-    // tests above that already use CALLER - and never leaks into them either, thanks to @DirtiesContext.
+    // Uses its own token/account, never CALLER's, so this test's budget never mixes with the many sendMoney/
+    // makePayment tests elsewhere that already use CALLER - and never leaks into them either, thanks to
+    // @DirtiesContext.
     private static final long RATE_LIMITED_CALLER = 9000000001L;
     private static final String RATE_LIMITED_TOKEN = "rate-limit-test-token";
 
@@ -494,12 +495,35 @@ class PhonepeControllerTest {
 
         mockMvc.perform(sendMoneyRequest(RATE_LIMITED_TOKEN))
                 .andExpect(status().isTooManyRequests())
-                .andExpect(content().string("Too many transfer requests. Please wait a minute and try again."));
+                .andExpect(content().string("Too many payment requests. Please wait a minute and try again."));
+    }
+
+    // makePayment debits through the exact same bank call as sendMoney; the two must share one combined budget
+    // per account rather than makePayment being left with no limit of its own.
+    @Test
+    @org.springframework.test.annotation.DirtiesContext(methodMode = org.springframework.test.annotation.DirtiesContext.MethodMode.AFTER_METHOD)
+    void sendMoneyAndMakePayment_shareOneRateLimitBudgetPerAccount_tooManyRequests_is429() throws Exception {
+        when(sessionService.authenticate(RATE_LIMITED_TOKEN)).thenReturn(RATE_LIMITED_CALLER);
+        when(phonepeService.makePayment(eq(RATE_LIMITED_CALLER), any(), any()))
+                .thenReturn(transaction(100000, RATE_LIMITED_CALLER, null, TransactionStatus.COMPLETED));
+
+        for (int i = 0; i < WebConfig.DEFAULT_MAX_SENDMONEY_ATTEMPTS_PER_ACCOUNT; i++) {
+            mockMvc.perform(makePaymentRequest(RATE_LIMITED_TOKEN)).andExpect(status().isOk());
+        }
+
+        mockMvc.perform(sendMoneyRequest(RATE_LIMITED_TOKEN))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(content().string("Too many payment requests. Please wait a minute and try again."));
     }
 
     private static MockHttpServletRequestBuilder sendMoneyRequest(String token) {
         return post("/phonepe/sendmoney").header("Authorization", "Bearer " + token)
                 .contentType(MediaType.APPLICATION_JSON).content("{\"receiverPhno\":9123456789,\"amount\":250}");
+    }
+
+    private static MockHttpServletRequestBuilder makePaymentRequest(String token) {
+        return post("/phonepe/makepayment").header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":10}");
     }
 
     // ============ POST /phonepe/makepayment ============
