@@ -73,6 +73,12 @@ public class BankGateway {
             if (user == null) {
                 throw new UserNotExistException("User not found");
             }
+            if (user.getBalance() == null) {
+                // A malformed or adversarial bank response (a missing/null balance field) must not NPE deep in
+                // PhonepeService.money() and surface as a raw 500 - treat it the same as any other bank response
+                // we cannot trust.
+                throw new BankUnavailableException("The bank returned an incomplete profile for this account.", null);
+            }
             return user;
         } catch (FeignException.BadRequest | FeignException.NotFound e) {
             throw new UserNotExistException("User not found");

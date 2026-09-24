@@ -1,16 +1,23 @@
 package com.example.phonepayservice.exception;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 // Every error is plain text so the web page can show it as it is.
 @ControllerAdvice
 public class GlobalExceptionHandler {
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
     private static ResponseEntity<String> reply(HttpStatus status, String message) {
         return ResponseEntity.status(status).body(message);
     }
@@ -87,5 +94,35 @@ public class GlobalExceptionHandler {
     @ExceptionHandler({BankConflictException.class, ConcurrencyFailureException.class, DataIntegrityViolationException.class})
     public ResponseEntity<String> handleConflict(RuntimeException e) {
         return reply(HttpStatus.CONFLICT, "Another request changed the same data at the same time. Please retry.");
+    }
+
+    // malformed request body (bad JSON, wrong type for a field) - a caller mistake, not a server error
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<String> handleMalformedBody(HttpMessageNotReadableException e) {
+        return reply(HttpStatus.BAD_REQUEST, "Malformed request body");
+    }
+
+    // e.g. a non-numeric transaction id in the path - Spring would otherwise map this to 400 on its own; kept
+    // explicit here only because the catch-all below would otherwise shadow that with a 500.
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<String> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
+        return reply(HttpStatus.BAD_REQUEST, "Invalid request");
+    }
+
+    // an unmapped URL - Spring would otherwise map this to 404 on its own; kept explicit here only because the
+    // catch-all below would otherwise shadow that with a 500.
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<String> handleNoResource(NoResourceFoundException e) {
+        return reply(HttpStatus.NOT_FOUND, "Not found");
+    }
+
+    // Anything else is a bug we didn't anticipate (see also BankGateway.findUser's null-balance check, one
+    // example of what used to fall through to here as a bare, unhandled 500). Never let it leak a stack trace
+    // or an internal exception message to the caller - log it here, where the exception and stack are both
+    // still available, and tell the caller only that something went wrong.
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<String> handleUnexpected(Exception e) {
+        log.error("Unexpected error", e);
+        return reply(HttpStatus.INTERNAL_SERVER_ERROR, "Something went wrong. Please try again.");
     }
 }
