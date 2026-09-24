@@ -330,6 +330,78 @@ class TransactionRepositoryTest {
         assertEquals(1, repository.findVisibleTo(ASHA, null, null, null, null, newestFirst(0, 20)).getTotalElements());
     }
 
+    // ---------- monthly summary aggregates ----------
+
+    // newTransaction()'s default createdAt (2026-09-21) falls in this range, so these tests don't need to set
+    // it themselves - except the date-scoping test, which deliberately uses its own explicit dates.
+    private static final Instant SEPTEMBER_START = Instant.parse("2026-09-01T00:00:00Z");
+    private static final Instant SEPTEMBER_END = Instant.parse("2026-09-30T23:59:59.999999999Z");
+
+    @Test
+    void sumSentAndCountSent_onlyCountWhatAshaPaid() {
+        repository.save(newTransaction(100000, ASHA, RAVI, "10"));
+        repository.save(newTransaction(100001, ASHA, MEENA, "20"));
+        repository.save(newTransaction(100002, RAVI, ASHA, "999"));   // Asha received this, not sent it
+        flushAndClear();
+
+        assertEquals(0, new BigDecimal("30").compareTo(repository.sumSent(ASHA, SEPTEMBER_START, SEPTEMBER_END)));
+        assertEquals(2, repository.countSent(ASHA, SEPTEMBER_START, SEPTEMBER_END));
+    }
+
+    @Test
+    void sumReceivedAndCountReceived_onlyCountWhatAshaReceived() {
+        repository.save(newTransaction(100000, RAVI, ASHA, "10"));
+        repository.save(newTransaction(100001, MEENA, ASHA, "20"));
+        repository.save(newTransaction(100002, ASHA, RAVI, "999"));   // Asha sent this, not received it
+        flushAndClear();
+
+        assertEquals(0, new BigDecimal("30").compareTo(repository.sumReceived(ASHA, SEPTEMBER_START, SEPTEMBER_END)));
+        assertEquals(2, repository.countReceived(ASHA, SEPTEMBER_START, SEPTEMBER_END));
+    }
+
+    @Test
+    void sumSent_isZero_notNull_whenThereIsNothing() {
+        assertEquals(0, new BigDecimal("0").compareTo(repository.sumSent(ASHA, SEPTEMBER_START, SEPTEMBER_END)));
+        assertEquals(0, repository.countSent(ASHA, SEPTEMBER_START, SEPTEMBER_END));
+    }
+
+    // A pending/failed/needs-reconciliation payment is not money that actually moved, so it must not appear in
+    // either side of the summary - unlike the plain history list, which still shows it to its own payer.
+    @Test
+    void summaryAggregates_excludeUnfinishedPayments() {
+        Transaction pending = newTransaction(100000, ASHA, RAVI, "50");
+        pending.setStatus(TransactionStatus.PENDING);
+        Transaction failed = newTransaction(100001, ASHA, RAVI, "60");
+        failed.setStatus(TransactionStatus.FAILED);
+        Transaction needsReconciliation = newTransaction(100002, ASHA, RAVI, "70");
+        needsReconciliation.setStatus(TransactionStatus.NEEDS_RECONCILIATION);
+        Transaction completed = newTransaction(100003, ASHA, RAVI, "10");
+        repository.save(pending);
+        repository.save(failed);
+        repository.save(needsReconciliation);
+        repository.save(completed);
+        flushAndClear();
+
+        assertEquals(0, new BigDecimal("10").compareTo(repository.sumSent(ASHA, SEPTEMBER_START, SEPTEMBER_END)));
+        assertEquals(1, repository.countSent(ASHA, SEPTEMBER_START, SEPTEMBER_END));
+    }
+
+    @Test
+    void summaryAggregates_areScopedToTheGivenDateRange() {
+        Transaction inJanuary = newTransaction(100000, ASHA, RAVI, "10");
+        inJanuary.setCreatedAt(Instant.parse("2026-01-15T00:00:00Z"));
+        Transaction inFebruary = newTransaction(100001, ASHA, RAVI, "999");
+        inFebruary.setCreatedAt(Instant.parse("2026-02-15T00:00:00Z"));
+        repository.save(inJanuary);
+        repository.save(inFebruary);
+        flushAndClear();
+
+        Instant janStart = Instant.parse("2026-01-01T00:00:00Z");
+        Instant janEnd = Instant.parse("2026-01-31T23:59:59.999999999Z");
+        assertEquals(0, new BigDecimal("10").compareTo(repository.sumSent(ASHA, janStart, janEnd)));
+        assertEquals(1, repository.countSent(ASHA, janStart, janEnd));
+    }
+
     // ---------- what is stored ----------
 
     @Test
