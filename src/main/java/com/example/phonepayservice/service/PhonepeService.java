@@ -28,6 +28,7 @@ import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Moving money touches two systems (this database and the bank), and no database transaction can span both, so this
@@ -83,7 +84,14 @@ public class PhonepeService {
 
     // ---------- payments ----------
 
-    public Transaction sendMoney(long payer, long receiver, BigDecimal amount, String note) {
+    public Transaction sendMoney(long payer, long receiver, BigDecimal amount, String note, String idempotencyKey) {
+        String key = normalizeKey(idempotencyKey);
+        if (key != null) {
+            Transaction existing = transactions.findByPhnoAndIdempotencyKey(payer, key).orElse(null);
+            if (existing != null) {
+                return matchingExistingOrThrow(existing, receiver, amount);
+            }
+        }
         requireValidPhone(receiver);
         BigDecimal value = requireValidAmount(amount);
         if (payer == receiver) {
@@ -93,14 +101,30 @@ public class PhonepeService {
         // No pre-flight check on the receiver here: the bank's transfer is atomic, so if the receiver does not
         // exist the whole call fails with nothing moved - a separate lookup first would only add a network
         // round trip without adding any safety.
-        Transaction t = record(payer, receiver, value, "Transfer", note);
+        RecordOutcome outcome = record(payer, receiver, value, "Transfer", note, key);
+        if (!outcome.isNew()) {
+            // lost a race with a concurrent request carrying the same key; that request owns this payment
+            return matchingExistingOrThrow(outcome.transaction(), receiver, value);
+        }
+        Transaction t = outcome.transaction();
         transfer(t, payer, receiver, value);
         return settle(t, TransactionStatus.COMPLETED, null);
     }
 
-    public Transaction makePayment(long payer, BigDecimal amount, String note) {
+    public Transaction makePayment(long payer, BigDecimal amount, String note, String idempotencyKey) {
+        String key = normalizeKey(idempotencyKey);
+        if (key != null) {
+            Transaction existing = transactions.findByPhnoAndIdempotencyKey(payer, key).orElse(null);
+            if (existing != null) {
+                return matchingExistingOrThrow(existing, null, amount);
+            }
+        }
         BigDecimal value = requireValidAmount(amount);
-        Transaction t = record(payer, null, value, "Payment", note);
+        RecordOutcome outcome = record(payer, null, value, "Payment", note, key);
+        if (!outcome.isNew()) {
+            return matchingExistingOrThrow(outcome.transaction(), null, value);
+        }
+        Transaction t = outcome.transaction();
         debit(t, payer, value);
         return settle(t, TransactionStatus.COMPLETED, null);
     }
@@ -183,7 +207,12 @@ public class PhonepeService {
 
     // ---------- bookkeeping ----------
 
-    private Transaction record(long payer, Long receiver, BigDecimal amount, String mode, String note) {
+    // isNew tells the caller whether this is a fresh row that still needs the bank called (true), or an
+    // existing row a concurrent identical request already recorded a moment ago (false) - in the latter case
+    // the caller must return it as-is and must NOT call the bank again.
+    private record RecordOutcome(Transaction transaction, boolean isNew) {}
+
+    private RecordOutcome record(long payer, Long receiver, BigDecimal amount, String mode, String note, String idempotencyKey) {
         for (int attempt = 1; ; attempt++) {
             Transaction t = new Transaction();
             t.setTransactionId(nextTransactionId());
@@ -194,15 +223,38 @@ public class PhonepeService {
             t.setStatus(TransactionStatus.PENDING);
             t.setCreatedAt(clock.instant());
             t.setNote(note == null || note.isBlank() ? null : note.trim());
+            t.setIdempotencyKey(idempotencyKey);
             try {
-                return transactions.saveAndFlush(t);
+                return new RecordOutcome(transactions.saveAndFlush(t), true);
             } catch (DataIntegrityViolationException e) {
-                // another request took the same number a moment ago; the unique constraint caught it, so take the next one
+                // Two different constraints can cause this: the transactionId collided with a concurrent
+                // insert (take the next number and retry), or - only possible when a key was given - a
+                // concurrent request with the SAME idempotency key won the race (return its row, don't retry).
+                if (idempotencyKey != null) {
+                    Transaction existing = transactions.findByPhnoAndIdempotencyKey(payer, idempotencyKey).orElse(null);
+                    if (existing != null) {
+                        return new RecordOutcome(existing, false);
+                    }
+                }
                 if (attempt >= MAX_ID_ATTEMPTS) {
                     throw e;
                 }
             }
         }
+    }
+
+    private static String normalizeKey(String idempotencyKey) {
+        return idempotencyKey == null || idempotencyKey.isBlank() ? null : idempotencyKey.trim();
+    }
+
+    // A retry must carry the SAME request, not just the same key - otherwise a reused key (a client bug, or a
+    // copy-pasted key) would silently return success for a payment that was never actually asked for.
+    private Transaction matchingExistingOrThrow(Transaction existing, Long expectedReceiver, BigDecimal expectedAmount) {
+        boolean receiverMatches = Objects.equals(existing.getReceiverPhno(), expectedReceiver);
+        if (!receiverMatches || existing.getAmount().compareTo(expectedAmount) != 0) {
+            throw new InvalidRequestException("This idempotency key was already used for a different request.");
+        }
+        return existing;
     }
 
     private long nextTransactionId() {

@@ -10,7 +10,7 @@ import java.time.Instant;
 @Table(name="transaction", indexes = {
         @Index(name = "idx_transaction_phno", columnList = "phno"),
         @Index(name = "idx_transaction_recieverno", columnList = "recieverno")
-})
+}, uniqueConstraints = @UniqueConstraint(name = "uq_transaction_phno_idempotency_key", columnNames = {"phno", "idempotency_key"}))
 @Data
 public class Transaction {
     @Id
@@ -34,4 +34,10 @@ public class Transaction {
     // any payment made without one.
     @Column(length = 140)
     private String note;
+    // Optional: lets a caller safely retry an identical sendmoney/makepayment request after a lost response
+    // (network drop, client timeout) without risking a duplicate transfer. Scoped per payer, not globally
+    // unique, so two different customers can never collide on the same key by coincidence. Null when the
+    // caller didn't supply one - such a request gets no retry protection, exactly as before this field existed.
+    @Column(name = "idempotency_key")
+    private String idempotencyKey;
 }

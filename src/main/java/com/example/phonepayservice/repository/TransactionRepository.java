@@ -14,6 +14,7 @@ import java.util.Optional;
 @Repository
 public interface TransactionRepository extends JpaRepository<Transaction, Long> {
     Optional<Transaction> findByTransactionId(long transactionId);
+    Optional<Transaction> findByPhnoAndIdempotencyKey(long phno, String idempotencyKey);
     // Everything a person paid, plus completed payments they received - a pending/failed/needs-reconciliation
     // payment is hidden from its receiver, since the money never reliably reached them (see PhonepeService).
     // from/to are optional: the (:from IS NULL OR ...) form lets one query serve both the filtered and
