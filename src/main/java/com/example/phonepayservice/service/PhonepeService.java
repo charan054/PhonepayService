@@ -5,6 +5,7 @@ import com.example.phonepayservice.dto.BalanceResponse;
 import com.example.phonepayservice.dto.BankLoginResult;
 import com.example.phonepayservice.dto.BankUser;
 import com.example.phonepayservice.dto.LoginResponse;
+import com.example.phonepayservice.dto.MonthlySummaryResponse;
 import com.example.phonepayservice.dto.PageResponse;
 import com.example.phonepayservice.dto.ProfileResponse;
 import com.example.phonepayservice.entity.Transaction;
@@ -27,6 +28,10 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalTime;
+import java.time.YearMonth;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ThreadLocalRandom;
@@ -145,6 +150,26 @@ public class PhonepeService {
             throw new InvalidRequestException("'from' must not be after 'to'.");
         }
         return PageResponse.of(transactions.findVisibleTo(viewer, from, to, counterparty, noteContains, pageable(page, size)));
+    }
+
+    // month defaults to the current one (in UTC) when not given, so GET /phonepe/summary with no query string
+    // is always a meaningful answer, not an error.
+    public MonthlySummaryResponse monthlySummary(long viewer, String month) {
+        YearMonth ym = (month == null || month.isBlank()) ? YearMonth.now(clock) : parseMonth(month);
+        Instant from = ym.atDay(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+        Instant to = ym.atEndOfMonth().atTime(LocalTime.MAX).atZone(ZoneOffset.UTC).toInstant();
+
+        return new MonthlySummaryResponse(ym.toString(),
+                money(transactions.sumSent(viewer, from, to)), transactions.countSent(viewer, from, to),
+                money(transactions.sumReceived(viewer, from, to)), transactions.countReceived(viewer, from, to));
+    }
+
+    private YearMonth parseMonth(String month) {
+        try {
+            return YearMonth.parse(month);
+        } catch (DateTimeParseException e) {
+            throw new InvalidRequestException("month must be in YYYY-MM format.");
+        }
     }
 
     // page/size come straight from a query parameter, so out-of-range values are a caller mistake, not a crash.

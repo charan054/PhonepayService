@@ -4,6 +4,7 @@ import com.example.phonepayservice.configuration.AuthInterceptor;
 import com.example.phonepayservice.dto.BalanceResponse;
 import com.example.phonepayservice.dto.LoginRequest;
 import com.example.phonepayservice.dto.LoginResponse;
+import com.example.phonepayservice.dto.MonthlySummaryResponse;
 import com.example.phonepayservice.dto.PageResponse;
 import com.example.phonepayservice.dto.PayeeResponse;
 import com.example.phonepayservice.dto.PaymentRequest;
@@ -93,6 +94,13 @@ public class PhonepeController {
     public TransactionResponse transaction(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
                                            @PathVariable long transactionId) {
         return TransactionResponse.from(phonepeService.transaction(caller, transactionId), caller);
+    }
+
+    // month is "YYYY-MM"; omitted, it defaults to the current month.
+    @GetMapping("/summary")
+    public MonthlySummaryResponse summary(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
+                                          @RequestParam(required = false) String month) {
+        return phonepeService.monthlySummary(caller, month);
     }
 
     // ---------- saved payees ----------
