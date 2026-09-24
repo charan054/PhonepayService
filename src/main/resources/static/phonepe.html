@@ -262,6 +262,48 @@
           box-shadow:none;
         }
 
+        .payee-list{
+          margin-top:4px;
+          display:flex;
+          flex-direction:column;
+          gap:8px;
+        }
+
+        .payee-row{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:10px;
+          background:#f0f9ff;
+          border:1px solid var(--border);
+          border-radius:12px;
+          padding:10px 12px;
+        }
+
+        .payee-row .payee-name{
+          font-weight:800;
+          font-size:14px;
+          color:var(--text);
+          overflow:hidden;
+          text-overflow:ellipsis;
+          white-space:nowrap;
+        }
+
+        .payee-row .payee-delete{
+          width:auto;
+          flex-shrink:0;
+          padding:7px 11px;
+          font-size:13px;
+          background:var(--danger);
+          box-shadow:none;
+        }
+
+        .payee-empty{
+          color:var(--muted);
+          font-size:14px;
+          font-weight:700;
+        }
+
         .status-badge{
           display:inline-block;
           padding:4px 10px;
@@ -408,19 +450,9 @@
                 <h2>My Payees</h2>
                 <span class="method">GET</span>
             </div>
-            <p>View everyone you've saved as a payee.</p>
-            <button onclick="getPayees()">View Payees</button>
-        </div>
-
-        <div class="card">
-            <div class="card-title">
-                <div class="icon">🗑️</div>
-                <h2>Delete Payee</h2>
-                <span class="method">DELETE</span>
-            </div>
-            <p>Remove a saved payee.</p>
-            <input type="number" id="deletePayeePhno" placeholder="Payee phone number">
-            <button onclick="deletePayee()">Delete Payee</button>
+            <p>Everyone you've saved as a payee. Click the trash icon to remove one.</p>
+            <button onclick="getPayees()">Refresh Payees</button>
+            <div id="payeeList" class="payee-list"></div>
         </div>
 
     </section>
@@ -455,6 +487,7 @@
       } catch (e) { /* storage blocked: the login simply lasts until the page is reloaded */ }
       updateSessionBar();
       refreshPayeeSelect();
+      getPayees();
     }
 
     // Single source of truth for which screen is showing: logged out sees only the login card, logged in sees
@@ -765,28 +798,58 @@
       const nickname = document.getElementById("payeeNickname").value;
       if (!phno) return showStatus("Please enter a payee phone number.", "error");
 
-      const data = await apiCall(`${BASE_URL}/payees`, jsonRequest("POST", { payeePhno: Number(phno), nickname: nickname || null }));
-      showStatus("Payee saved successfully. Result opened in new tab.", "success");
-      openResultTab("Save Payee", data);
-      refreshPayeeSelect();
+      await apiCall(`${BASE_URL}/payees`, jsonRequest("POST", { payeePhno: Number(phno), nickname: nickname || null }));
+      document.getElementById("payeePhno").value = "";
+      document.getElementById("payeeNickname").value = "";
+      await Promise.all([refreshPayeeSelect(), getPayees()]);
+      showStatus("Payee saved successfully.", "success");
     }
 
+    // Deliberately silent (not requireLogin()) when logged out: this also runs on page load and after every
+    // login/logout via storeSession(), where popping an error toast before the person has done anything would
+    // be noise, not feedback.
     async function getPayees() {
-      if (!requireLogin()) return;
+      if (!sessionToken) {
+        document.getElementById("payeeList").innerHTML = "";
+        return;
+      }
 
       const data = await apiCall(`${BASE_URL}/payees`);
-      showStatus("Payees loaded successfully. Result opened in new tab.", "success");
-      openResultTab("My Payees", data);
+      renderPayeeList(data);
     }
 
-    async function deletePayee() {
-      if (!requireLogin()) return;
-      const phno = document.getElementById("deletePayeePhno").value;
-      if (!phno) return showStatus("Please enter a payee phone number.", "error");
+    function payeeLabel(payee) {
+      return payee.nickname ? `${payee.nickname} (${payee.payeePhno})` : String(payee.payeePhno);
+    }
+
+    function renderPayeeList(payees) {
+      const container = document.getElementById("payeeList");
+      if (!payees || payees.length === 0) {
+        container.innerHTML = `<div class="payee-empty">No payees saved yet.</div>`;
+        return;
+      }
+      container.innerHTML = payees.map(payee => `
+        <div class="payee-row">
+          <span class="payee-name">${escapeHtml(payeeLabel(payee))}</span>
+          <button type="button" class="payee-delete" data-phno="${payee.payeePhno}" data-label="${escapeHtml(payeeLabel(payee))}">Delete</button>
+        </div>
+      `).join("");
+    }
+
+    // Event delegation on the (persistent) list container - row buttons are re-created on every render,
+    // so a listener attached directly to them would need re-wiring after each renderPayeeList() call.
+    document.getElementById("payeeList").addEventListener("click", (event) => {
+      const button = event.target.closest(".payee-delete");
+      if (!button) return;
+      deletePayeeByPhno(Number(button.dataset.phno), button.dataset.label);
+    });
+
+    async function deletePayeeByPhno(phno, label) {
+      if (!confirm(`Remove ${label} from your payees?`)) return;
 
       await apiCall(`${BASE_URL}/payees/${encodeURIComponent(phno)}`, { method: "DELETE" });
+      await Promise.all([refreshPayeeSelect(), getPayees()]);
       showStatus("Payee deleted successfully.", "success");
-      refreshPayeeSelect();
     }
 
     async function getTransactionById() {
@@ -801,6 +864,7 @@
 
     updateSessionBar();
     refreshPayeeSelect();
+    getPayees();
 </script>
 
 </body>
