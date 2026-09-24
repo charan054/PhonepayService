@@ -5,6 +5,7 @@ import com.example.phonepayservice.dto.BalanceResponse;
 import com.example.phonepayservice.dto.BankLoginResult;
 import com.example.phonepayservice.dto.BankUser;
 import com.example.phonepayservice.dto.LoginResponse;
+import com.example.phonepayservice.dto.MonthlySummaryResponse;
 import com.example.phonepayservice.dto.PageResponse;
 import com.example.phonepayservice.dto.ProfileResponse;
 import com.example.phonepayservice.entity.Transaction;
@@ -710,6 +711,68 @@ class PhonepeServiceTest {
         assertThrows(InvalidRequestException.class, () -> service.transactionsOf(RECEIVER, 0, PhonepeService.MAX_PAGE_SIZE + 1, null, null, null, null));
 
         verifyNoInteractions(transactions);
+    }
+
+    // ============ monthly summary ============
+
+    // The fixed clock in setUp() is 2026-09-21T10:00:00Z, so "no month given" must resolve to September 2026.
+    @Test
+    void monthlySummary_defaultsToTheCurrentMonth_whenNoneGiven() {
+        Instant septemberStart = Instant.parse("2026-09-01T00:00:00Z");
+        Instant septemberEnd = Instant.parse("2026-09-30T23:59:59.999999999Z");
+        when(transactions.sumSent(eq(RECEIVER), any(), any())).thenReturn(BigDecimal.ZERO);
+        when(transactions.sumReceived(eq(RECEIVER), any(), any())).thenReturn(BigDecimal.ZERO);
+
+        MonthlySummaryResponse result = service.monthlySummary(RECEIVER, null);
+
+        assertEquals("2026-09", result.month());
+        verify(transactions).sumSent(RECEIVER, septemberStart, septemberEnd);
+        verify(transactions).sumReceived(RECEIVER, septemberStart, septemberEnd);
+        verify(transactions).countSent(RECEIVER, septemberStart, septemberEnd);
+        verify(transactions).countReceived(RECEIVER, septemberStart, septemberEnd);
+    }
+
+    @Test
+    void monthlySummary_blankMonth_alsoDefaultsToTheCurrentMonth() {
+        when(transactions.sumSent(eq(RECEIVER), any(), any())).thenReturn(BigDecimal.ZERO);
+        when(transactions.sumReceived(eq(RECEIVER), any(), any())).thenReturn(BigDecimal.ZERO);
+
+        assertEquals("2026-09", service.monthlySummary(RECEIVER, "  ").month());
+    }
+
+    @Test
+    void monthlySummary_parsesAnExplicitMonth() {
+        Instant januaryStart = Instant.parse("2026-01-01T00:00:00Z");
+        Instant januaryEnd = Instant.parse("2026-01-31T23:59:59.999999999Z");
+        when(transactions.sumSent(eq(RECEIVER), any(), any())).thenReturn(BigDecimal.ZERO);
+        when(transactions.sumReceived(eq(RECEIVER), any(), any())).thenReturn(BigDecimal.ZERO);
+
+        MonthlySummaryResponse result = service.monthlySummary(RECEIVER, "2026-01");
+
+        assertEquals("2026-01", result.month());
+        verify(transactions).sumSent(RECEIVER, januaryStart, januaryEnd);
+    }
+
+    @Test
+    void monthlySummary_invalidMonthFormat_throwsInvalidRequest() {
+        assertThrows(InvalidRequestException.class, () -> service.monthlySummary(RECEIVER, "not-a-month"));
+
+        verifyNoInteractions(transactions);
+    }
+
+    @Test
+    void monthlySummary_roundsAmountsToTwoDecimals_andPassesCountsThrough() {
+        when(transactions.sumSent(eq(RECEIVER), any(), any())).thenReturn(new BigDecimal("12.3"));
+        when(transactions.sumReceived(eq(RECEIVER), any(), any())).thenReturn(new BigDecimal("45"));
+        when(transactions.countSent(eq(RECEIVER), any(), any())).thenReturn(3L);
+        when(transactions.countReceived(eq(RECEIVER), any(), any())).thenReturn(7L);
+
+        MonthlySummaryResponse result = service.monthlySummary(RECEIVER, "2026-01");
+
+        assertEquals(new BigDecimal("12.30"), result.totalSent());
+        assertEquals(3, result.sentCount());
+        assertEquals(new BigDecimal("45.00"), result.totalReceived());
+        assertEquals(7, result.receivedCount());
     }
 
     @Test
