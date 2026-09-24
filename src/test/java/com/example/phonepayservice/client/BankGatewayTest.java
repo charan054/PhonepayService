@@ -75,6 +75,7 @@ class BankGatewayTest {
     void findUser_returnsTheBanksUser() {
         BankUser user = new BankUser();
         user.setName("KUMAR CHARAN");
+        user.setBalance(new BigDecimal("1000.00"));
         when(bank.displayUser(SERVICE_KEY, PHNO)).thenReturn(user);
 
         assertSame(user, gateway().findUser(PHNO));
@@ -84,7 +85,9 @@ class BankGatewayTest {
     void everyCall_sendsTheConfiguredServiceKey_notSomeOtherValue() {
         gateway().withdraw(PHNO, new BigDecimal("10"));
         gateway().deposit(PHNO, new BigDecimal("10"));
-        when(bank.displayUser(SERVICE_KEY, PHNO)).thenReturn(new BankUser());
+        BankUser user = new BankUser();
+        user.setBalance(new BigDecimal("0"));
+        when(bank.displayUser(SERVICE_KEY, PHNO)).thenReturn(user);
         gateway().findUser(PHNO);
 
         verify(bank).withdrawByphno(SERVICE_KEY, PHNO, new BigDecimal("10"));
@@ -113,6 +116,19 @@ class BankGatewayTest {
         when(bank.displayUser(anyString(), any(Long.class))).thenReturn(null);
 
         assertThrows(UserNotExistException.class, () -> gateway().findUser(PHNO));
+    }
+
+    // A malformed/adversarial bank response (the user exists, but with no balance field at all) must not NPE
+    // deep inside PhonepeService.money() and surface as a raw 500 - it gets treated the same as any other bank
+    // response this app cannot trust.
+    @Test
+    void findUser_missingBalance_meansBankUnavailable() {
+        BankUser user = new BankUser();
+        user.setName("KUMAR CHARAN");
+        user.setBalance(null);
+        when(bank.displayUser(anyString(), any(Long.class))).thenReturn(user);
+
+        assertThrows(BankUnavailableException.class, () -> gateway().findUser(PHNO));
     }
 
     @Test

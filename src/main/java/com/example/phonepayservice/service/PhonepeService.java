@@ -29,6 +29,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Moving money touches two systems (this database and the bank), and no database transaction can span both, so this
@@ -43,6 +44,8 @@ public class PhonepeService {
     private static final int MAX_ID_ATTEMPTS = 5;
     private static final int MAX_TRANSFER_ATTEMPTS = 3;
     private static final int MAX_SETTLE_ATTEMPTS = 3;
+    private static final long BACKOFF_BASE_MS = 120;
+    private static final long BACKOFF_JITTER_MS = 80;
     public static final int DEFAULT_PAGE_SIZE = 20;
     public static final int MAX_PAGE_SIZE = 100;
 
@@ -189,6 +192,7 @@ public class PhonepeService {
                     throw new TransferFailedException("The bank was too busy to complete your transfer. Please try again.");
                 }
                 // retrying with the SAME idempotency key is always safe: nothing committed on the failed attempt
+                backoffBeforeRetry(attempt);
             } catch (BankOutcomeUnknownException e) {
                 if (attempt >= MAX_TRANSFER_ATTEMPTS) {
                     unresolved(t, "Transfer not confirmed after " + attempt + " attempts: " + e.getMessage());
@@ -198,11 +202,24 @@ public class PhonepeService {
                 // Retrying with the SAME idempotency key is always safe here too: the bank either already
                 // completed this exact attempt and returns that result unchanged, or it never did and executes
                 // it fresh - either way the money can never move twice.
+                backoffBeforeRetry(attempt);
             } catch (RuntimeException e) {
                 // refused (bad receiver, insufficient funds) or never reached the bank: nothing moved either way
                 settle(t, TransactionStatus.FAILED, e.getMessage());
                 throw e;
             }
+        }
+    }
+
+    // A short, jittered pause before a retry, so a struggling bank isn't hit with the next attempt at the exact
+    // moment it's least able to handle it. Jitter spreads out multiple concurrent callers who would otherwise
+    // all retry at the same fixed interval and re-collide.
+    private void backoffBeforeRetry(int attempt) {
+        long delay = BACKOFF_BASE_MS * attempt + ThreadLocalRandom.current().nextLong(BACKOFF_JITTER_MS);
+        try {
+            Thread.sleep(delay);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

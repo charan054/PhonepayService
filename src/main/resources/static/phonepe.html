@@ -195,18 +195,49 @@
         }
 
         .status-panel{
-          margin-top:24px;
+          position:fixed;
+          right:22px;
+          bottom:22px;
+          max-width:340px;
+          z-index:1000;
+          display:flex;
+          align-items:flex-start;
+          gap:10px;
           background:white;
-          border-radius:22px;
-          padding:18px 22px;
-          box-shadow:var(--shadow);
-          border-left:6px solid #38bdf8;
+          border-radius:16px;
+          padding:14px 16px;
+          box-shadow:0 18px 40px rgba(2,50,90,.25);
+          border-left:5px solid #38bdf8;
           font-weight:800;
+          font-size:14px;
           color:#0369a1;
+          opacity:0;
+          transform:translateY(12px);
+          pointer-events:none;
+          transition:opacity .2s ease, transform .2s ease;
         }
 
-        .success{color:var(--success)}
-        .error{color:var(--danger)}
+        .status-panel.show{
+          opacity:1;
+          transform:translateY(0);
+          pointer-events:auto;
+        }
+
+        .status-panel span{flex-grow:1; line-height:1.4;}
+
+        .status-panel .status-close{
+          all:unset;
+          cursor:pointer;
+          font-size:16px;
+          line-height:1;
+          color:inherit;
+          opacity:.6;
+        }
+
+        .status-panel .status-close:hover{opacity:1;}
+
+        .success{border-left-color:var(--success); color:var(--success)}
+        .error{border-left-color:var(--danger); color:var(--danger)}
 
         .session-bar{
           display:inline-flex;
@@ -394,9 +425,7 @@
 
     </section>
 
-    <div id="status" class="status-panel">
-        Ready. Results will open in a separate browser tab with a professional view.
-    </div>
+    <div id="status" class="status-panel" role="status" aria-live="polite"></div>
 </main>
 
 <script>
@@ -467,10 +496,24 @@
       }
     }
 
+    // A small toast in the corner, not a bar that sits under the page. Success/info messages dismiss themselves
+    // after a few seconds so they never pile up unread; errors stay put (with a manual close) since missing why
+    // something failed defeats the point of showing it.
+    let statusHideTimer = null;
+
     function showStatus(message, className) {
       const status = document.getElementById("status");
-      status.className = "status-panel " + (className || "");
-      status.textContent = message;
+      clearTimeout(statusHideTimer);
+      status.className = "status-panel show " + (className || "");
+      status.innerHTML = `<span>${escapeHtml(message)}</span><button type="button" class="status-close" onclick="hideStatus()" aria-label="Dismiss">&times;</button>`;
+      if (className !== "error") {
+        statusHideTimer = setTimeout(hideStatus, 4000);
+      }
+    }
+
+    function hideStatus() {
+      clearTimeout(statusHideTimer);
+      document.getElementById("status").classList.remove("show");
     }
 
     function escapeHtml(value) {
