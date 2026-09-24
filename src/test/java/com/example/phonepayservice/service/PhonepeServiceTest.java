@@ -355,6 +355,22 @@ class PhonepeServiceTest {
         assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.NEEDS_RECONCILIATION), writes);
     }
 
+    // The worst case this app can hit: the bank's outcome is already unknown, AND the database won't even take
+    // the NEEDS_RECONCILIATION flag meant to make a human look at it. That flag must never just get silently
+    // dropped - the caller still has to be told, loudly, that something needs manual attention.
+    @Test
+    void sendMoney_transferStaysUnknown_andTheReconciliationFlagCannotBeSavedEither_stillTellsTheCaller() {
+        when(transactions.findMaxTransactionId()).thenReturn(null);
+        doThrow(new BankOutcomeUnknownException("timeout", null)).when(bank).transfer(eq(PAYER), eq(RECEIVER), any(), any());
+        doThrow(new RuntimeException("db down")).when(transactions).save(any(Transaction.class));
+
+        TransferFailedException ex = assertThrows(TransferFailedException.class,
+                () -> service.sendMoney(PAYER, RECEIVER, AMOUNT, null, null));
+
+        assertTrue(ex.getMessage().contains("check your balance") || ex.getMessage().contains("Check your balance"), ex.getMessage());
+        verify(transactions, times(3)).save(any(Transaction.class));   // gave up only after retrying
+    }
+
     // ============ sendMoney: the bank was busy (a conflict) - this one is definite, not ambiguous ============
 
     @Test
@@ -492,16 +508,52 @@ class PhonepeServiceTest {
         verify(bank, times(2)).transfer(any(Long.class), any(Long.class), any(), any());
     }
 
+    // A transient blip (a dropped connection, a momentary pool exhaustion) is the realistic case this retry
+    // actually exists for: the save fails once but succeeds on a later attempt, so the true COMPLETED status
+    // still ends up recorded - nothing is lost, and the caller never even sees an error.
     @Test
-    void ifTheFinalStatusCannotBeSaved_thePaymentStillCountsAsDone() {
-        // the money HAS moved; failing the request now would only hide that
+    void ifTheFinalSaveFailsOnce_itIsRetried_andTheTrueStatusStillGetsRecorded() {
         when(transactions.findMaxTransactionId()).thenReturn(null);
-        doThrow(new RuntimeException("db down")).when(transactions).save(any(Transaction.class));
+        doThrow(new RuntimeException("db down")).doAnswer(inv -> inv.getArgument(0))
+                .when(transactions).save(any(Transaction.class));
 
         Transaction t = service.sendMoney(PAYER, RECEIVER, AMOUNT, null, null);
 
         assertEquals(TransactionStatus.COMPLETED, t.getStatus());
+        verify(transactions, times(2)).save(any(Transaction.class));
         verify(bank).transfer(PAYER, RECEIVER, AMOUNT, "phonepe-100000");
+    }
+
+    // The bug this guards against: the bank confirms the money moved, but the database never records that -
+    // returning a COMPLETED-looking object anyway would tell the caller (and the receiver's own transaction
+    // list, which is gated on the DB's own status) that it succeeded when the database does not reflect that at
+    // all. The caller must instead see the same honest uncertainty as an outcome the bank itself never confirmed.
+    @Test
+    void ifTheFinalStatusCanNeverBeSaved_theCallerIsToldTheUncertainty_notAFabricatedSuccess() {
+        when(transactions.findMaxTransactionId()).thenReturn(null);
+        doThrow(new RuntimeException("db down")).when(transactions).save(any(Transaction.class));
+
+        TransferFailedException ex = assertThrows(TransferFailedException.class,
+                () -> service.sendMoney(PAYER, RECEIVER, AMOUNT, null, null));
+
+        assertTrue(ex.getMessage().contains("check your balance") || ex.getMessage().contains("Check your balance"), ex.getMessage());
+        verify(transactions, times(3)).save(any(Transaction.class));   // gave up after 3 attempts
+        verify(bank).transfer(PAYER, RECEIVER, AMOUNT, "phonepe-100000");   // the money still really moved
+    }
+
+    // FAILED is different: nothing moved, and the caller is about to see the real reason why (the exception the
+    // bank actually threw) - so a save failure here is a bookkeeping loose end, not a false claim of success,
+    // and must not replace that real reason with a generic "could not record" error.
+    @Test
+    void ifASaveOfAFailedStatusCannotBeWritten_theOriginalFailureReasonStillReachesTheCaller() {
+        when(transactions.findMaxTransactionId()).thenReturn(null);
+        doThrow(new UserNotExistException("User not found")).when(bank).transfer(eq(PAYER), eq(RECEIVER), any(), any());
+        doThrow(new RuntimeException("db down")).when(transactions).save(any(Transaction.class));
+
+        UserNotExistException ex = assertThrows(UserNotExistException.class,
+                () -> service.sendMoney(PAYER, RECEIVER, AMOUNT, null, null));
+
+        assertEquals("User not found", ex.getMessage());
     }
 
     // ============ makePayment ============

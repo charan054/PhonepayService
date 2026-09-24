@@ -42,6 +42,7 @@ public class PhonepeService {
     static final long FIRST_TRANSACTION_ID = 100000;
     private static final int MAX_ID_ATTEMPTS = 5;
     private static final int MAX_TRANSFER_ATTEMPTS = 3;
+    private static final int MAX_SETTLE_ATTEMPTS = 3;
     public static final int DEFAULT_PAGE_SIZE = 20;
     public static final int MAX_PAGE_SIZE = 100;
 
@@ -262,15 +263,32 @@ public class PhonepeService {
         return highest == null ? FIRST_TRANSACTION_ID : highest + 1;
     }
 
+    // A few retries absorb a transient DB blip (a connection drop, a momentary pool exhaustion) - the common
+    // case this is actually likely to hit. If it still won't save after that, COMPLETED and NEEDS_RECONCILIATION
+    // both mean money may have already moved: returning the in-memory object as if this succeeded would tell the
+    // caller (and, for COMPLETED, the receiver's own transaction list) that it did, when the database itself
+    // does not reflect that at all. Throwing here instead means the caller sees the same honest "check your
+    // balance" uncertainty they'd get from an outcome the bank itself left unconfirmed.
     private Transaction settle(Transaction t, TransactionStatus status, String reason) {
         t.setStatus(status);
         t.setFailureReason(reason == null ? null : reason.substring(0, Math.min(reason.length(), 250)));
-        try {
-            return transactions.save(t);
-        } catch (RuntimeException e) {
-            // The money has already moved; failing the request now would only hide that. Leave a loud trace instead.
-            log.error("Could not save final status {} for transaction {}: {}", status, t.getTransactionId(), e.getMessage());
-            return t;
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return transactions.save(t);
+            } catch (RuntimeException e) {
+                log.error("Could not save final status {} for transaction {} (attempt {}/{}): {}",
+                        status, t.getTransactionId(), attempt, MAX_SETTLE_ATTEMPTS, e.getMessage());
+                if (attempt >= MAX_SETTLE_ATTEMPTS) {
+                    if (status == TransactionStatus.COMPLETED || status == TransactionStatus.NEEDS_RECONCILIATION) {
+                        throw new TransferFailedException("Your payment may have gone through, but we could not "
+                                + "record its final status. Check your balance and transactions before trying "
+                                + "again. Reference: " + t.getTransactionId());
+                    }
+                    // FAILED: nothing moved, and the caller is about to see the real reason why from its own
+                    // exception - leaving this row stuck PENDING is a bookkeeping loose end, not a false success.
+                    return t;
+                }
+            }
         }
     }
 
