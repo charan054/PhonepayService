@@ -164,7 +164,7 @@ class TransactionRepositoryTest {
         repository.save(newTransaction(100002, ASHA, null, "30"));    // Asha paid a bill
         flushAndClear();
 
-        Page<Transaction> history = repository.findVisibleTo(ASHA, null, null, newestFirst(0, 20));
+        Page<Transaction> history = repository.findVisibleTo(ASHA, null, null, null, null, newestFirst(0, 20));
 
         assertEquals(List.of(100002L, 100001L, 100000L), history.getContent().stream().map(Transaction::getTransactionId).toList());
     }
@@ -175,7 +175,7 @@ class TransactionRepositoryTest {
         repository.save(newTransaction(100001, RAVI, MEENA, "20"));   // nothing to do with Asha
         flushAndClear();
 
-        Page<Transaction> history = repository.findVisibleTo(ASHA, null, null, newestFirst(0, 20));
+        Page<Transaction> history = repository.findVisibleTo(ASHA, null, null, null, null, newestFirst(0, 20));
 
         assertEquals(List.of(100000L), history.getContent().stream().map(Transaction::getTransactionId).toList());
     }
@@ -185,7 +185,7 @@ class TransactionRepositoryTest {
         repository.save(newTransaction(100000, ASHA, RAVI, "10"));
         flushAndClear();
 
-        assertTrue(repository.findVisibleTo(MEENA, null, null, newestFirst(0, 20)).isEmpty());
+        assertTrue(repository.findVisibleTo(MEENA, null, null, null, null, newestFirst(0, 20)).isEmpty());
     }
 
     @Test
@@ -195,9 +195,9 @@ class TransactionRepositoryTest {
         repository.save(pending);
         flushAndClear();
 
-        assertEquals(List.of(100000L), repository.findVisibleTo(ASHA, null, null, newestFirst(0, 20))
+        assertEquals(List.of(100000L), repository.findVisibleTo(ASHA, null, null, null, null, newestFirst(0, 20))
                 .getContent().stream().map(Transaction::getTransactionId).toList());
-        assertTrue(repository.findVisibleTo(RAVI, null, null, newestFirst(0, 20)).isEmpty(), "the money may never have reached Ravi");
+        assertTrue(repository.findVisibleTo(RAVI, null, null, null, null, newestFirst(0, 20)).isEmpty(), "the money may never have reached Ravi");
     }
 
     @Test
@@ -207,8 +207,8 @@ class TransactionRepositoryTest {
         }
         flushAndClear();
 
-        Page<Transaction> firstPage = repository.findVisibleTo(ASHA, null, null, newestFirst(0, 2));
-        Page<Transaction> secondPage = repository.findVisibleTo(ASHA, null, null, newestFirst(1, 2));
+        Page<Transaction> firstPage = repository.findVisibleTo(ASHA, null, null, null, null, newestFirst(0, 2));
+        Page<Transaction> secondPage = repository.findVisibleTo(ASHA, null, null, null, null, newestFirst(1, 2));
 
         assertEquals(5, firstPage.getTotalElements());
         assertEquals(3, firstPage.getTotalPages());
@@ -232,7 +232,7 @@ class TransactionRepositoryTest {
         flushAndClear();
 
         Page<Transaction> filtered = repository.findVisibleTo(ASHA,
-                Instant.parse("2026-01-10T00:00:00Z"), Instant.parse("2026-01-20T00:00:00Z"), newestFirst(0, 20));
+                Instant.parse("2026-01-10T00:00:00Z"), Instant.parse("2026-01-20T00:00:00Z"), null, null, newestFirst(0, 20));
 
         assertEquals(List.of(100001L), filtered.getContent().stream().map(Transaction::getTransactionId).toList());
     }
@@ -245,7 +245,7 @@ class TransactionRepositoryTest {
         repository.save(t);
         flushAndClear();
 
-        assertEquals(1, repository.findVisibleTo(ASHA, exact, exact, newestFirst(0, 20)).getTotalElements());
+        assertEquals(1, repository.findVisibleTo(ASHA, exact, exact, null, null, newestFirst(0, 20)).getTotalElements());
     }
 
     @Test
@@ -255,7 +255,79 @@ class TransactionRepositoryTest {
         repository.save(t);
         flushAndClear();
 
-        assertEquals(1, repository.findVisibleTo(ASHA, null, null, newestFirst(0, 20)).getTotalElements());
+        assertEquals(1, repository.findVisibleTo(ASHA, null, null, null, null, newestFirst(0, 20)).getTotalElements());
+    }
+
+    // ---------- optional counterparty filter ----------
+
+    @Test
+    void findVisibleTo_filtersByCounterparty_whenGiven() {
+        repository.save(newTransaction(100000, ASHA, RAVI, "10"));
+        repository.save(newTransaction(100001, ASHA, MEENA, "20"));
+        flushAndClear();
+
+        Page<Transaction> filtered = repository.findVisibleTo(ASHA, null, null, RAVI, null, newestFirst(0, 20));
+
+        assertEquals(List.of(100000L), filtered.getContent().stream().map(Transaction::getTransactionId).toList());
+    }
+
+    // The counterparty is whichever side of the transaction isn't the viewer, so it must match regardless of
+    // whether the viewer was the payer or the receiver on that particular row.
+    @Test
+    void findVisibleTo_counterpartyMatchesEitherSide() {
+        repository.save(newTransaction(100000, ASHA, RAVI, "10"));    // Asha paid Ravi
+        repository.save(newTransaction(100001, RAVI, ASHA, "20"));    // Ravi paid Asha
+
+        flushAndClear();
+
+        Page<Transaction> filtered = repository.findVisibleTo(ASHA, null, null, RAVI, null, newestFirst(0, 20));
+
+        assertEquals(List.of(100001L, 100000L), filtered.getContent().stream().map(Transaction::getTransactionId).toList());
+    }
+
+    @Test
+    void findVisibleTo_noCounterparty_returnsEverything() {
+        repository.save(newTransaction(100000, ASHA, RAVI, "10"));
+        repository.save(newTransaction(100001, ASHA, MEENA, "20"));
+        flushAndClear();
+
+        assertEquals(2, repository.findVisibleTo(ASHA, null, null, null, null, newestFirst(0, 20)).getTotalElements());
+    }
+
+    // ---------- optional note filter ----------
+
+    @Test
+    void findVisibleTo_filtersByNoteContains_caseInsensitiveSubstring() {
+        Transaction rent = newTransaction(100000, ASHA, RAVI, "10");
+        rent.setNote("September rent");
+        Transaction tickets = newTransaction(100001, ASHA, RAVI, "10");
+        tickets.setNote("movie tickets");
+        repository.save(rent);
+        repository.save(tickets);
+        flushAndClear();
+
+        Page<Transaction> filtered = repository.findVisibleTo(ASHA, null, null, null, "RENT", newestFirst(0, 20));
+
+        assertEquals(List.of(100000L), filtered.getContent().stream().map(Transaction::getTransactionId).toList());
+    }
+
+    @Test
+    void findVisibleTo_noteContains_treatsAMissingNoteAsNoMatch() {
+        Transaction noNote = newTransaction(100000, ASHA, RAVI, "10");    // note left unset
+        repository.save(noNote);
+        flushAndClear();
+
+        assertTrue(repository.findVisibleTo(ASHA, null, null, null, "rent", newestFirst(0, 20)).isEmpty());
+    }
+
+    @Test
+    void findVisibleTo_noNoteFilter_returnsEverything() {
+        Transaction t = newTransaction(100000, ASHA, RAVI, "10");
+        t.setNote("whatever");
+        repository.save(t);
+        flushAndClear();
+
+        assertEquals(1, repository.findVisibleTo(ASHA, null, null, null, null, newestFirst(0, 20)).getTotalElements());
     }
 
     // ---------- what is stored ----------
