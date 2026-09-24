@@ -185,6 +185,11 @@ class PhonepeIntegrationTest {
                 .content("{\"receiverPhno\":" + receiver + ",\"amount\":" + amount + "}");
     }
 
+    private MockHttpServletRequestBuilder send(String token, long receiver, String amount, String idempotencyKey) {
+        return as(token, post("/phonepe/sendmoney")).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"receiverPhno\":" + receiver + ",\"amount\":" + amount + ",\"idempotencyKey\":\"" + idempotencyKey + "\"}");
+    }
+
     private List<Transaction> storedTransactions() {
         return transactionRepository.findAll();
     }
@@ -359,6 +364,64 @@ class PhonepeIntegrationTest {
         assertEquals(0, stored.getAmount().compareTo(new java.math.BigDecimal("250")));
     }
 
+    // The scenario the idempotencyKey field exists for: the first request actually reached the bank and the
+    // money moved, but the client never saw the response (the connection died on the way back). Its retry - the
+    // exact same request, carrying the same key - must be recognized as the same payment, not sent again.
+    @Test
+    void sendMoney_retryWithTheSameIdempotencyKey_doesNotMoveTheMoneyTwice() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        transferSucceeds();
+        String token = login(ASHA);
+        bank.resetRequests();
+
+        mockMvc.perform(send(token, RAVI, "250", "client-key-1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionId").value(100000));
+
+        // the client never saw that response and retries with the identical request
+        mockMvc.perform(send(token, RAVI, "250", "client-key-1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionId").value(100000));   // the SAME transaction, not a new one
+
+        assertEquals(List.of(TRANSFER), bankCalls(), "only the first attempt may ever reach the bank");
+        assertEquals(1, transactionRepository.count());
+    }
+
+    @Test
+    void sendMoney_sameIdempotencyKey_withADifferentRequest_isRejected() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        transferSucceeds();
+        String token = login(ASHA);
+
+        mockMvc.perform(send(token, RAVI, "250", "client-key-1")).andExpect(status().isOk());
+        bank.resetRequests();
+
+        // same key, but a different receiver this time - a client bug (or a copy-pasted key) must not silently
+        // succeed as if it were a legitimate retry of the first payment
+        mockMvc.perform(send(token, MEENA, "250", "client-key-1"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("This idempotency key was already used for a different request."));
+
+        assertEquals(List.of(), bankCalls(), "the mismatched retry must never reach the bank");
+        assertEquals(1, transactionRepository.count());
+    }
+
+    @Test
+    void sendMoney_withoutAnIdempotencyKey_behavesExactlyAsBefore() throws Exception {
+        // Backward compatible: a caller that never supplies a key gets no retry protection, same as before this
+        // field existed - each request is always treated as a brand new payment.
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        transferSucceeds();
+        String token = login(ASHA);
+        bank.resetRequests();
+
+        mockMvc.perform(send(token, RAVI, "250")).andExpect(status().isOk());
+        mockMvc.perform(send(token, RAVI, "250")).andExpect(status().isOk());
+
+        assertEquals(List.of(TRANSFER, TRANSFER), bankCalls());
+        assertEquals(2, transactionRepository.count());
+    }
+
     @Test
     void sendMoney_storesAndReturnsTheNote() throws Exception {
         bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
@@ -496,6 +559,27 @@ class PhonepeIntegrationTest {
                 .andExpect(jsonPath("$.note").value("movie tickets"));
 
         assertEquals("movie tickets", storedTransactions().get(0).getNote());
+    }
+
+    @Test
+    void makePayment_retryWithTheSameIdempotencyKey_doesNotPayTwice() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        withdrawSucceeds(ASHA);
+        String token = login(ASHA);
+        bank.resetRequests();
+
+        mockMvc.perform(as(token, post("/phonepe/makepayment")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\":99.5,\"idempotencyKey\":\"client-key-1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionId").value(100000));
+
+        mockMvc.perform(as(token, post("/phonepe/makepayment")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\":99.5,\"idempotencyKey\":\"client-key-1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionId").value(100000));
+
+        assertEquals(List.of(withdraw(ASHA, "99.50")), bankCalls(), "only the first attempt may ever reach the bank");
+        assertEquals(1, transactionRepository.count());
     }
 
     @Test

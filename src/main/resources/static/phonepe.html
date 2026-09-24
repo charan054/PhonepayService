@@ -651,6 +651,13 @@
       if (select.value) document.getElementById("sendPhno").value = select.value;
     }
 
+    // A fresh key per click: if this exact submission has to be retried (e.g. the browser retries a request
+    // whose response never arrived), sending the same key again lets the server recognize it as the same
+    // payment instead of moving the money a second time.
+    function randomIdempotencyKey() {
+      try { return crypto.randomUUID(); } catch (e) { return "key-" + Date.now() + "-" + Math.random().toString(36).slice(2); }
+    }
+
     async function sendMoney() {
       if (!requireLogin()) return;
       const phno = document.getElementById("sendPhno").value;
@@ -659,7 +666,8 @@
 
       if (!phno || !amount) return showStatus("Please enter receiver phone number and amount.", "error");
 
-      const data = await apiCall(`${BASE_URL}/sendmoney`, jsonRequest("POST", { receiverPhno: Number(phno), amount: Number(amount), note: note || null }));
+      const data = await apiCall(`${BASE_URL}/sendmoney`, jsonRequest("POST",
+          { receiverPhno: Number(phno), amount: Number(amount), note: note || null, idempotencyKey: randomIdempotencyKey() }));
       showStatus("Money sent successfully. Result opened in new tab.", "success");
       openResultTab("Send Money", data);
     }
@@ -670,7 +678,8 @@
       const note = document.getElementById("paymentNote").value;
       if (!amount) return showStatus("Please enter payment amount.", "error");
 
-      const data = await apiCall(`${BASE_URL}/makepayment`, jsonRequest("POST", { amount: Number(amount), note: note || null }));
+      const data = await apiCall(`${BASE_URL}/makepayment`, jsonRequest("POST",
+          { amount: Number(amount), note: note || null, idempotencyKey: randomIdempotencyKey() }));
       showStatus("Payment completed successfully. Result opened in new tab.", "success");
       openResultTab("Make Payment", data);
     }
