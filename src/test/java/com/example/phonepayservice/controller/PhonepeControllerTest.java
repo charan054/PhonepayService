@@ -330,7 +330,7 @@ class PhonepeControllerTest {
 
     @Test
     void sendMoney_success_returnsTheTransactionFromTheCallersPointOfView() throws Exception {
-        when(phonepeService.sendMoney(eq(CALLER), eq(RECEIVER), any(), any()))
+        when(phonepeService.sendMoney(eq(CALLER), eq(RECEIVER), any(), any(), any()))
                 .thenReturn(transaction(100000, CALLER, RECEIVER, TransactionStatus.COMPLETED));
 
         mockMvc.perform(asCaller(post("/phonepe/sendmoney")).contentType(MediaType.APPLICATION_JSON)
@@ -346,7 +346,7 @@ class PhonepeControllerTest {
 
     @Test
     void sendMoney_theCallerCannotChooseWhoPays() throws Exception {
-        when(phonepeService.sendMoney(eq(CALLER), eq(RECEIVER), any(), any()))
+        when(phonepeService.sendMoney(eq(CALLER), eq(RECEIVER), any(), any(), any()))
                 .thenReturn(transaction(100000, CALLER, RECEIVER, TransactionStatus.COMPLETED));
 
         // a client that tries to name a different payer in the body or the query string
@@ -354,15 +354,15 @@ class PhonepeControllerTest {
                         .content("{\"payerPhno\":9000000001,\"phno\":9000000001,\"receiverPhno\":9123456789,\"amount\":250}"))
                 .andExpect(status().isOk());
 
-        verify(phonepeService).sendMoney(eq(CALLER), eq(RECEIVER), argThat(a -> a.compareTo(new BigDecimal("250")) == 0), any());
-        verify(phonepeService, never()).sendMoney(eq(9000000001L), anyLong(), any(), any());
+        verify(phonepeService).sendMoney(eq(CALLER), eq(RECEIVER), argThat(a -> a.compareTo(new BigDecimal("250")) == 0), any(), any());
+        verify(phonepeService, never()).sendMoney(eq(9000000001L), anyLong(), any(), any(), any());
     }
 
     @Test
     void sendMoney_passesTheNoteThrough_andReturnsItInTheResponse() throws Exception {
         Transaction withNote = transaction(100000, CALLER, RECEIVER, TransactionStatus.COMPLETED);
         withNote.setNote("rent");
-        when(phonepeService.sendMoney(eq(CALLER), eq(RECEIVER), any(), eq("rent"))).thenReturn(withNote);
+        when(phonepeService.sendMoney(eq(CALLER), eq(RECEIVER), any(), eq("rent"), any())).thenReturn(withNote);
 
         mockMvc.perform(asCaller(post("/phonepe/sendmoney")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"receiverPhno\":9123456789,\"amount\":250,\"note\":\"rent\"}"))
@@ -433,7 +433,7 @@ class PhonepeControllerTest {
 
     @Test
     void sendMoney_insufficientFunds_returns400() throws Exception {
-        when(phonepeService.sendMoney(eq(CALLER), eq(RECEIVER), any(), any())).thenThrow(new BalanceException("Insufficient Funds"));
+        when(phonepeService.sendMoney(eq(CALLER), eq(RECEIVER), any(), any(), any())).thenThrow(new BalanceException("Insufficient Funds"));
 
         mockMvc.perform(asCaller(post("/phonepe/sendmoney")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"receiverPhno\":9123456789,\"amount\":250}"))
@@ -443,7 +443,7 @@ class PhonepeControllerTest {
 
     @Test
     void sendMoney_unknownReceiver_returns404() throws Exception {
-        when(phonepeService.sendMoney(eq(CALLER), eq(RECEIVER), any(), any())).thenThrow(new UserNotExistException("User not found"));
+        when(phonepeService.sendMoney(eq(CALLER), eq(RECEIVER), any(), any(), any())).thenThrow(new UserNotExistException("User not found"));
 
         mockMvc.perform(asCaller(post("/phonepe/sendmoney")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"receiverPhno\":9123456789,\"amount\":250}"))
@@ -453,7 +453,7 @@ class PhonepeControllerTest {
 
     @Test
     void sendMoney_transferFailed_returns502_withWhatHappenedToTheMoney() throws Exception {
-        when(phonepeService.sendMoney(eq(CALLER), eq(RECEIVER), any(), any()))
+        when(phonepeService.sendMoney(eq(CALLER), eq(RECEIVER), any(), any(), any()))
                 .thenThrow(new TransferFailedException("The transfer could not be completed. Your money has been returned."));
 
         mockMvc.perform(asCaller(post("/phonepe/sendmoney")).contentType(MediaType.APPLICATION_JSON)
@@ -464,7 +464,7 @@ class PhonepeControllerTest {
 
     @Test
     void sendMoney_bankBusy_returns409Retry() throws Exception {
-        when(phonepeService.sendMoney(eq(CALLER), eq(RECEIVER), any(), any())).thenThrow(new BankConflictException("busy"));
+        when(phonepeService.sendMoney(eq(CALLER), eq(RECEIVER), any(), any(), any())).thenThrow(new BankConflictException("busy"));
 
         mockMvc.perform(asCaller(post("/phonepe/sendmoney")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"receiverPhno\":9123456789,\"amount\":250}"))
@@ -474,7 +474,7 @@ class PhonepeControllerTest {
 
     @Test
     void sendMoney_bankDown_returns503() throws Exception {
-        when(phonepeService.sendMoney(eq(CALLER), eq(RECEIVER), any(), any())).thenThrow(new BankUnavailableException("The bank service is unavailable. Please try again later.", null));
+        when(phonepeService.sendMoney(eq(CALLER), eq(RECEIVER), any(), any(), any())).thenThrow(new BankUnavailableException("The bank service is unavailable. Please try again later.", null));
 
         mockMvc.perform(asCaller(post("/phonepe/sendmoney")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"receiverPhno\":9123456789,\"amount\":250}"))
@@ -493,7 +493,7 @@ class PhonepeControllerTest {
     @org.springframework.test.annotation.DirtiesContext(methodMode = org.springframework.test.annotation.DirtiesContext.MethodMode.AFTER_METHOD)
     void sendMoney_tooManyRequestsFromTheSameAccount_is429() throws Exception {
         when(sessionService.authenticate(RATE_LIMITED_TOKEN)).thenReturn(RATE_LIMITED_CALLER);
-        when(phonepeService.sendMoney(eq(RATE_LIMITED_CALLER), eq(RECEIVER), any(), any()))
+        when(phonepeService.sendMoney(eq(RATE_LIMITED_CALLER), eq(RECEIVER), any(), any(), any()))
                 .thenReturn(transaction(100000, RATE_LIMITED_CALLER, RECEIVER, TransactionStatus.COMPLETED));
 
         for (int i = 0; i < WebConfig.DEFAULT_MAX_SENDMONEY_ATTEMPTS_PER_ACCOUNT; i++) {
@@ -511,7 +511,7 @@ class PhonepeControllerTest {
     @org.springframework.test.annotation.DirtiesContext(methodMode = org.springframework.test.annotation.DirtiesContext.MethodMode.AFTER_METHOD)
     void sendMoneyAndMakePayment_shareOneRateLimitBudgetPerAccount_tooManyRequests_is429() throws Exception {
         when(sessionService.authenticate(RATE_LIMITED_TOKEN)).thenReturn(RATE_LIMITED_CALLER);
-        when(phonepeService.makePayment(eq(RATE_LIMITED_CALLER), any(), any()))
+        when(phonepeService.makePayment(eq(RATE_LIMITED_CALLER), any(), any(), any()))
                 .thenReturn(transaction(100000, RATE_LIMITED_CALLER, null, TransactionStatus.COMPLETED));
 
         for (int i = 0; i < WebConfig.DEFAULT_MAX_SENDMONEY_ATTEMPTS_PER_ACCOUNT; i++) {
@@ -537,7 +537,7 @@ class PhonepeControllerTest {
 
     @Test
     void makePayment_success() throws Exception {
-        when(phonepeService.makePayment(eq(CALLER), any(), any())).thenReturn(transaction(100001, CALLER, null, TransactionStatus.COMPLETED));
+        when(phonepeService.makePayment(eq(CALLER), any(), any(), any())).thenReturn(transaction(100001, CALLER, null, TransactionStatus.COMPLETED));
 
         mockMvc.perform(asCaller(post("/phonepe/makepayment")).contentType(MediaType.APPLICATION_JSON).content("{\"amount\":99.5}"))
                 .andExpect(status().isOk())
@@ -545,14 +545,14 @@ class PhonepeControllerTest {
                 .andExpect(jsonPath("$.receiverPhno").doesNotExist())
                 .andExpect(jsonPath("$.direction").value("DEBIT"));
 
-        verify(phonepeService).makePayment(eq(CALLER), argThat(a -> a.compareTo(new BigDecimal("99.5")) == 0), any());
+        verify(phonepeService).makePayment(eq(CALLER), argThat(a -> a.compareTo(new BigDecimal("99.5")) == 0), any(), any());
     }
 
     @Test
     void makePayment_passesTheNoteThrough_andReturnsItInTheResponse() throws Exception {
         Transaction withNote = transaction(100001, CALLER, null, TransactionStatus.COMPLETED);
         withNote.setNote("movie tickets");
-        when(phonepeService.makePayment(eq(CALLER), any(), eq("movie tickets"))).thenReturn(withNote);
+        when(phonepeService.makePayment(eq(CALLER), any(), eq("movie tickets"), any())).thenReturn(withNote);
 
         mockMvc.perform(asCaller(post("/phonepe/makepayment")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"amount\":99.5,\"note\":\"movie tickets\"}"))
@@ -583,7 +583,7 @@ class PhonepeControllerTest {
 
     @Test
     void makePayment_insufficientFunds_returns400() throws Exception {
-        when(phonepeService.makePayment(eq(CALLER), any(), any())).thenThrow(new BalanceException("Insufficient Funds"));
+        when(phonepeService.makePayment(eq(CALLER), any(), any(), any())).thenThrow(new BalanceException("Insufficient Funds"));
 
         mockMvc.perform(asCaller(post("/phonepe/makepayment")).contentType(MediaType.APPLICATION_JSON).content("{\"amount\":500}"))
                 .andExpect(status().isBadRequest())

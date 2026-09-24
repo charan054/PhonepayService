@@ -92,6 +92,58 @@ class TransactionRepositoryTest {
         assertTrue(repository.findByTransactionId(999).isEmpty());
     }
 
+    // ---------- idempotency key: lets a caller safely retry an identical request ----------
+
+    @Test
+    void findByPhnoAndIdempotencyKey_findsIt() {
+        Transaction t = newTransaction(100000, ASHA, RAVI, "10");
+        t.setIdempotencyKey("client-key-1");
+        repository.save(t);
+        flushAndClear();
+
+        assertTrue(repository.findByPhnoAndIdempotencyKey(ASHA, "client-key-1").isPresent());
+        assertTrue(repository.findByPhnoAndIdempotencyKey(ASHA, "no-such-key").isEmpty());
+    }
+
+    // Scoped per payer, not globally unique: two different customers must never collide on the same key by
+    // coincidence, the way Bankapplication's own (global) transfer idempotency key can.
+    @Test
+    void findByPhnoAndIdempotencyKey_isScopedToTheGivenPhno_notGlobal() {
+        Transaction ashas = newTransaction(100000, ASHA, RAVI, "10");
+        ashas.setIdempotencyKey("same-key");
+        Transaction ravis = newTransaction(100001, RAVI, ASHA, "20");
+        ravis.setIdempotencyKey("same-key");
+        repository.save(ashas);
+        repository.save(ravis);
+        flushAndClear();
+
+        assertEquals(100000L, repository.findByPhnoAndIdempotencyKey(ASHA, "same-key").orElseThrow().getTransactionId());
+        assertEquals(100001L, repository.findByPhnoAndIdempotencyKey(RAVI, "same-key").orElseThrow().getTransactionId());
+    }
+
+    @Test
+    void database_rejectsTwoTransactionsFromTheSamePayerWithTheSameIdempotencyKey() {
+        Transaction first = newTransaction(100000, ASHA, RAVI, "10");
+        first.setIdempotencyKey("client-key-1");
+        repository.saveAndFlush(first);
+
+        Transaction second = newTransaction(100001, ASHA, MEENA, "20");
+        second.setIdempotencyKey("client-key-1");
+
+        assertThrows(DataIntegrityViolationException.class, () -> repository.saveAndFlush(second));
+    }
+
+    @Test
+    void database_allowsManyTransactionsWithNoIdempotencyKey() {
+        // idempotencyKey is nullable and optional; several NULLs must never collide with each other the way two
+        // equal, present values would.
+        repository.saveAndFlush(newTransaction(100000, ASHA, RAVI, "10"));
+        repository.saveAndFlush(newTransaction(100001, ASHA, MEENA, "20"));
+        flushAndClear();
+
+        assertEquals(2, repository.count());
+    }
+
     // ---------- a person's own history ----------
 
     @Test
