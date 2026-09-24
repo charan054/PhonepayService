@@ -5,6 +5,7 @@ import com.example.phonepayservice.configuration.WebConfig;
 import com.example.phonepayservice.dto.BalanceResponse;
 import com.example.phonepayservice.dto.LoginResponse;
 import com.example.phonepayservice.dto.PageResponse;
+import com.example.phonepayservice.dto.PayeeResponse;
 import com.example.phonepayservice.dto.ProfileResponse;
 import com.example.phonepayservice.entity.Transaction;
 import com.example.phonepayservice.entity.TransactionStatus;
@@ -13,10 +14,13 @@ import com.example.phonepayservice.exception.BalanceException;
 import com.example.phonepayservice.exception.BankConflictException;
 import com.example.phonepayservice.exception.BankUnavailableException;
 import com.example.phonepayservice.exception.InvalidCredentialsException;
+import com.example.phonepayservice.exception.InvalidRequestException;
+import com.example.phonepayservice.exception.PayeeNotFoundException;
 import com.example.phonepayservice.exception.TransactionNotFoundException;
 import com.example.phonepayservice.exception.TransferFailedException;
 import com.example.phonepayservice.exception.UserNotExistException;
 import com.example.phonepayservice.exception.UserNotRegisteredException;
+import com.example.phonepayservice.service.PayeeService;
 import com.example.phonepayservice.service.PhonepeService;
 import com.example.phonepayservice.service.SessionService;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,6 +49,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -67,6 +72,8 @@ class PhonepeControllerTest {
 
     @MockitoBean
     private PhonepeService phonepeService;
+    @MockitoBean
+    private PayeeService payeeService;
     @MockitoBean
     private SessionService sessionService;
 
@@ -663,6 +670,109 @@ class PhonepeControllerTest {
     void transaction_nonNumericId_returns400() throws Exception {
         mockMvc.perform(asCaller(get("/phonepe/transactions/abc")))
                 .andExpect(status().isBadRequest());
+    }
+
+    // ============ POST /phonepe/payees ============
+
+    @Test
+    void savePayee_returnsTheSavedPayee() throws Exception {
+        when(payeeService.save(CALLER, RECEIVER, "Ravi")).thenReturn(new PayeeResponse(RECEIVER, "Ravi"));
+
+        mockMvc.perform(asCaller(post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payeePhno\":9123456789,\"nickname\":\"Ravi\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.payeePhno").value(RECEIVER))
+                .andExpect(jsonPath("$.nickname").value("Ravi"));
+    }
+
+    @Test
+    void savePayee_noNickname_isAllowed() throws Exception {
+        when(payeeService.save(CALLER, RECEIVER, null)).thenReturn(new PayeeResponse(RECEIVER, null));
+
+        mockMvc.perform(asCaller(post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payeePhno\":9123456789}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nickname").doesNotExist());
+    }
+
+    @Test
+    void savePayee_invalidPhoneNumber_returns400() throws Exception {
+        mockMvc.perform(asCaller(post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payeePhno\":123,\"nickname\":\"Ravi\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("Invalid mobile number"));
+
+        verifyNoInteractions(payeeService);
+    }
+
+    @Test
+    void savePayee_nicknameTooLong_returns400() throws Exception {
+        String tooLong = "x".repeat(51);
+
+        mockMvc.perform(asCaller(post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payeePhno\":9123456789,\"nickname\":\"" + tooLong + "\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("Nickname can be at most 50 characters"));
+    }
+
+    @Test
+    void savePayee_yourself_returns400() throws Exception {
+        when(payeeService.save(CALLER, CALLER, "Me")).thenThrow(new InvalidRequestException("You cannot save yourself as a payee"));
+
+        mockMvc.perform(asCaller(post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payeePhno\":9876543210,\"nickname\":\"Me\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("You cannot save yourself as a payee"));
+    }
+
+    @Test
+    void savePayee_needsAToken() throws Exception {
+        mockMvc.perform(post("/phonepe/payees").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payeePhno\":9123456789}"))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(payeeService);
+    }
+
+    // ============ GET /phonepe/payees ============
+
+    @Test
+    void payees_returnsTheCallersSavedPayees() throws Exception {
+        when(payeeService.listPayees(CALLER)).thenReturn(List.of(new PayeeResponse(RECEIVER, "Ravi")));
+
+        mockMvc.perform(asCaller(get("/phonepe/payees")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].payeePhno").value(RECEIVER))
+                .andExpect(jsonPath("$[0].nickname").value("Ravi"));
+    }
+
+    @Test
+    void payees_none_returnsAnEmptyList() throws Exception {
+        when(payeeService.listPayees(CALLER)).thenReturn(List.of());
+
+        mockMvc.perform(asCaller(get("/phonepe/payees")))
+                .andExpect(status().isOk())
+                .andExpect(content().string("[]"));
+    }
+
+    // ============ DELETE /phonepe/payees/{payeePhno} ============
+
+    @Test
+    void deletePayee_removesIt() throws Exception {
+        mockMvc.perform(asCaller(delete("/phonepe/payees/9123456789")))
+                .andExpect(status().isNoContent());
+
+        verify(payeeService).delete(CALLER, RECEIVER);
+    }
+
+    @Test
+    void deletePayee_notSaved_returns404() throws Exception {
+        org.mockito.Mockito.doThrow(new PayeeNotFoundException("No saved payee with that phone number"))
+                .when(payeeService).delete(CALLER, RECEIVER);
+
+        mockMvc.perform(asCaller(delete("/phonepe/payees/9123456789")))
+                .andExpect(status().isNotFound())
+                .andExpect(content().string("No saved payee with that phone number"));
     }
 
     // ============ the old, unauthenticated endpoints are gone ============

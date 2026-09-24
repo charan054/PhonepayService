@@ -47,6 +47,7 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMoc
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -644,6 +645,104 @@ class PhonepeIntegrationTest {
         for (String path : List.of("/phonepe/all", "/phonepe/transactionByphno", "/phonepe/transactionbyacno", "/phonepe/checkBalance")) {
             mockMvc.perform(as(token, get(path).param("phno", "9123456789"))).andExpect(status().isNotFound());
         }
+    }
+
+    // ============ saved payees ============
+
+    @Test
+    void savePayee_thenListIt() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        String token = login(ASHA);
+
+        mockMvc.perform(as(token, post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payeePhno\":" + RAVI + ",\"nickname\":\"Ravi\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.payeePhno").value(RAVI))
+                .andExpect(jsonPath("$.nickname").value("Ravi"));
+
+        mockMvc.perform(as(token, get("/phonepe/payees")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].payeePhno").value(RAVI))
+                .andExpect(jsonPath("$[0].nickname").value("Ravi"));
+    }
+
+    @Test
+    void savePayee_sameNumberAgain_updatesTheNickname_insteadOfDuplicating() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        String token = login(ASHA);
+        mockMvc.perform(as(token, post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payeePhno\":" + RAVI + ",\"nickname\":\"Old name\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(as(token, post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payeePhno\":" + RAVI + ",\"nickname\":\"New name\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nickname").value("New name"));
+
+        mockMvc.perform(as(token, get("/phonepe/payees")))
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].nickname").value("New name"));
+    }
+
+    @Test
+    void savedPayees_areNeverVisibleToAnotherAccount() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        bankHasUser(MEENA, "MEENA RAO", 3000.0);
+        String ashaToken = login(ASHA);
+        String meenaToken = login(MEENA);
+        mockMvc.perform(as(ashaToken, post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payeePhno\":" + RAVI + ",\"nickname\":\"Ravi\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(as(meenaToken, get("/phonepe/payees")))
+                .andExpect(status().isOk())
+                .andExpect(content().string("[]"));
+    }
+
+    @Test
+    void savePayee_yourself_isRejected() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        String token = login(ASHA);
+
+        mockMvc.perform(as(token, post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payeePhno\":" + ASHA + ",\"nickname\":\"Me\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("You cannot save yourself as a payee"));
+    }
+
+    @Test
+    void deletePayee_removesIt() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        String token = login(ASHA);
+        mockMvc.perform(as(token, post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payeePhno\":" + RAVI + ",\"nickname\":\"Ravi\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(as(token, delete("/phonepe/payees/" + RAVI)))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(as(token, get("/phonepe/payees")))
+                .andExpect(content().string("[]"));
+    }
+
+    @Test
+    void deletePayee_notSaved_returns404() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        String token = login(ASHA);
+
+        mockMvc.perform(as(token, delete("/phonepe/payees/" + RAVI)))
+                .andExpect(status().isNotFound())
+                .andExpect(content().string("No saved payee with that phone number"));
+    }
+
+    @Test
+    void payees_needAToken() throws Exception {
+        mockMvc.perform(get("/phonepe/payees")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/phonepe/payees").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"payeePhno\":" + RAVI + "}")).andExpect(status().isUnauthorized());
+        mockMvc.perform(delete("/phonepe/payees/" + RAVI)).andExpect(status().isUnauthorized());
+
+        assertEquals(List.of(), bankCalls(), "an unauthenticated caller must never make this service call the bank");
     }
 
     // ============ many payments at the same moment ============

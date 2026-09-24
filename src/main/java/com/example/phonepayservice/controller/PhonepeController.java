@@ -5,13 +5,17 @@ import com.example.phonepayservice.dto.BalanceResponse;
 import com.example.phonepayservice.dto.LoginRequest;
 import com.example.phonepayservice.dto.LoginResponse;
 import com.example.phonepayservice.dto.PageResponse;
+import com.example.phonepayservice.dto.PayeeResponse;
 import com.example.phonepayservice.dto.PaymentRequest;
 import com.example.phonepayservice.dto.ProfileResponse;
+import com.example.phonepayservice.dto.SavePayeeRequest;
 import com.example.phonepayservice.dto.SendMoneyRequest;
 import com.example.phonepayservice.dto.TransactionResponse;
+import com.example.phonepayservice.service.PayeeService;
 import com.example.phonepayservice.service.PhonepeService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -24,6 +28,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
+import java.util.List;
 
 /**
  * Every endpoint except /login needs "Authorization: Bearer <token>". The caller's phone number comes from that token
@@ -33,9 +38,11 @@ import java.time.Instant;
 @RequestMapping("/phonepe")
 public class PhonepeController {
     private final PhonepeService phonepeService;
+    private final PayeeService payeeService;
 
-    public PhonepeController(PhonepeService phonepeService) {
+    public PhonepeController(PhonepeService phonepeService, PayeeService payeeService) {
         this.phonepeService = phonepeService;
+        this.payeeService = payeeService;
     }
 
     @PostMapping("/login")
@@ -84,5 +91,25 @@ public class PhonepeController {
     public TransactionResponse transaction(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
                                            @PathVariable long transactionId) {
         return TransactionResponse.from(phonepeService.transaction(caller, transactionId), caller);
+    }
+
+    // ---------- saved payees ----------
+
+    @PostMapping("/payees")
+    public PayeeResponse savePayee(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
+                                   @Valid @RequestBody SavePayeeRequest request) {
+        return payeeService.save(caller, request.payeePhno(), request.nickname());
+    }
+
+    @GetMapping("/payees")
+    public List<PayeeResponse> payees(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller) {
+        return payeeService.listPayees(caller);
+    }
+
+    @DeleteMapping("/payees/{payeePhno}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deletePayee(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
+                            @PathVariable long payeePhno) {
+        payeeService.delete(caller, payeePhno);
     }
 }
