@@ -2,6 +2,7 @@ package com.example.phonepayservice.client;
 
 import com.example.phonepayservice.dto.BankTransferRequest;
 import com.example.phonepayservice.dto.BankUser;
+import com.example.phonepayservice.exception.AccountLockedException;
 import com.example.phonepayservice.exception.BalanceException;
 import com.example.phonepayservice.exception.BankConflictException;
 import com.example.phonepayservice.exception.BankOutcomeUnknownException;
@@ -179,6 +180,18 @@ class BankGatewayTest {
         BalanceException ex = assertThrows(BalanceException.class, () -> gateway().withdraw(PHNO, new BigDecimal("5")));
 
         assertEquals("The bank rejected the request", ex.getMessage());
+    }
+
+    // Currently unreachable in production (the bank never locks an account outside of login), but handled the
+    // same way login() already handles it: a locked account must never be mislabeled as a plain refusal.
+    @Test
+    void withdraw_accountLocked_isAccountLockedException_notAGenericBalanceException() {
+        when(bank.withdrawByphno(anyString(), any(Long.class), any(BigDecimal.class)))
+                .thenThrow(bankAnswers(423, "Too many failed attempts. Try again after 2026-09-24T10:15:00Z."));
+
+        AccountLockedException ex = assertThrows(AccountLockedException.class, () -> gateway().withdraw(PHNO, new BigDecimal("5")));
+
+        assertEquals("Too many failed attempts. Try again after 2026-09-24T10:15:00Z.", ex.getMessage());
     }
 
     @Test
