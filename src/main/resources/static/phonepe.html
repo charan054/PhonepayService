@@ -383,6 +383,25 @@
           font-weight:700;
         }
 
+        .qr-wrap{
+          display:flex;
+          justify-content:center;
+          align-items:center;
+          min-height:180px;
+        }
+
+        .qr-wrap canvas{
+          border-radius:16px;
+          box-shadow:0 8px 20px rgba(14,165,233,.18);
+        }
+
+        .qr-fallback{
+          color:var(--muted);
+          font-size:13px;
+          font-weight:700;
+          text-align:center;
+        }
+
         .status-badge{
           display:inline-block;
           padding:4px 10px;
@@ -446,6 +465,18 @@
             </div>
             <p>View your own CharanPe bank profile details, including your current balance.</p>
             <button onclick="getProfile()">View Profile</button>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <div class="icon">📷</div>
+                <h2>My QR Code</h2>
+            </div>
+            <p>Show this to someone so they can scan it and get your phone number for sending you money.</p>
+            <div class="qr-wrap">
+                <canvas id="myQrCanvas" width="180" height="180"></canvas>
+                <div id="myQrFallback" class="qr-fallback" style="display:none"></div>
+            </div>
         </div>
 
         <div class="card">
@@ -537,6 +568,8 @@
     <div id="status" class="status-panel" role="status" aria-live="polite"></div>
 </main>
 
+<!-- Renders "My QR Code". If this fails to load (offline, blocked), renderMyQrCode() falls back to showing the plain phone number instead of leaving a blank box. -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 <script>
     // Relative on purpose: the page always talks to the server it was loaded from (open it at http://localhost:8081/phonepe.html)
     const BASE_URL = "/phonepe";
@@ -544,6 +577,7 @@
     // The login token lives only in this browser tab (sessionStorage), so two people on two tabs stay two people.
     let sessionToken = readStoredToken();
     let sessionName = readStoredName();
+    let sessionPhno = readStoredPhno();
 
     function readStoredToken() {
       try { return sessionStorage.getItem("phonepeToken"); } catch (e) { return null; }
@@ -553,18 +587,31 @@
       try { return sessionStorage.getItem("phonepeName"); } catch (e) { return null; }
     }
 
+    function readStoredPhno() {
+      try { return sessionStorage.getItem("phonepePhno"); } catch (e) { return null; }
+    }
+
     // Keeps the top-of-page badge in sync with who (if anyone) is actually logged in, so it's always obvious
     // which account is active - important once you've logged out and back in as someone else in the same tab.
-    function storeSession(token, name) {
+    function storeSession(token, name, phno) {
       sessionToken = token;
       sessionName = name;
+      sessionPhno = phno;
       try {
-        if (token) { sessionStorage.setItem("phonepeToken", token); sessionStorage.setItem("phonepeName", name || ""); }
-        else { sessionStorage.removeItem("phonepeToken"); sessionStorage.removeItem("phonepeName"); }
+        if (token) {
+          sessionStorage.setItem("phonepeToken", token);
+          sessionStorage.setItem("phonepeName", name || "");
+          sessionStorage.setItem("phonepePhno", phno || "");
+        } else {
+          sessionStorage.removeItem("phonepeToken");
+          sessionStorage.removeItem("phonepeName");
+          sessionStorage.removeItem("phonepePhno");
+        }
       } catch (e) { /* storage blocked: the login simply lasts until the page is reloaded */ }
       updateSessionBar();
       refreshPayeeSelect();
       getPayees();
+      renderMyQrCode();
     }
 
     // Single source of truth for which screen is showing: logged out sees only the login card, logged in sees
@@ -589,7 +636,7 @@
         const response = await fetch(url, { ...options, headers });
 
         if (response.status === 401 && sessionToken) {
-          storeSession(null, null);   // the login expired or was ended: ask the person to log in again
+          storeSession(null, null, null);   // the login expired or was ended: ask the person to log in again
         }
         if (!response.ok) {
           const errorText = await response.text();
@@ -765,7 +812,7 @@
 
       try {
         const data = await apiCall(`${BASE_URL}/login`, jsonRequest("POST", { phno: Number(phno), pin }), { showErrorTab: false });
-        storeSession(data.token, data.name);
+        storeSession(data.token, data.name, data.phno);
         document.getElementById("loginPin").value = "";
         // the token itself is never shown or printed
         showStatus(`Logged in as ${data.name}.`, "success");
@@ -992,9 +1039,38 @@
       renderTransactionList("transactionByIdResult", [data]);
     }
 
+    // Encodes the logged-in person's own phone number so someone else can scan it (with their phone's camera,
+    // not a feature of this app) and get the number to send money to. Falls back to plain text if the QR
+    // library failed to load (offline, CDN blocked) or fails to render, rather than leaving a blank box.
+    function renderMyQrCode() {
+      const canvas = document.getElementById("myQrCanvas");
+      const fallback = document.getElementById("myQrFallback");
+      if (!sessionPhno) {
+        canvas.style.display = "none";
+        fallback.style.display = "none";
+        return;
+      }
+      if (typeof QRCode === "undefined") {
+        canvas.style.display = "none";
+        fallback.style.display = "block";
+        fallback.textContent = `QR library unavailable. Your number: ${sessionPhno}`;
+        return;
+      }
+      canvas.style.display = "block";
+      fallback.style.display = "none";
+      QRCode.toCanvas(canvas, String(sessionPhno), { width: 180, margin: 1 }, (error) => {
+        if (error) {
+          canvas.style.display = "none";
+          fallback.style.display = "block";
+          fallback.textContent = `Could not render QR code. Your number: ${sessionPhno}`;
+        }
+      });
+    }
+
     updateSessionBar();
     refreshPayeeSelect();
     getPayees();
+    renderMyQrCode();
 </script>
 
 </body>
