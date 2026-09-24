@@ -83,6 +83,17 @@ class TransactionRepositoryTest {
                 () -> repository.saveAndFlush(newTransaction(100000, RAVI, ASHA, "20")));
     }
 
+    // Every write path always sets a status before a row is ever visible to a reader; enforced here too, so a
+    // future write path can't leave one unset and have it silently treated as a legacy COMPLETED row by
+    // TransactionResponse.from()/PhonepeService.visibleTo() for a row that was never actually legacy.
+    @Test
+    void database_rejectsANullStatus() {
+        Transaction t = newTransaction(100000, ASHA, RAVI, "10");
+        t.setStatus(null);
+
+        assertThrows(DataIntegrityViolationException.class, () -> repository.saveAndFlush(t));
+    }
+
     @Test
     void findByTransactionId_findsIt() {
         repository.save(newTransaction(100000, ASHA, RAVI, "10"));
