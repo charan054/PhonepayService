@@ -618,7 +618,7 @@ class PhonepeControllerTest {
 
     @Test
     void transactions_areShownFromTheCallersPointOfView() throws Exception {
-        when(phonepeService.transactionsOf(eq(CALLER), anyInt(), anyInt(), any(), any())).thenReturn(pageOf(List.of(
+        when(phonepeService.transactionsOf(eq(CALLER), anyInt(), anyInt(), any(), any(), any(), any())).thenReturn(pageOf(List.of(
                 transaction(100002, RECEIVER, CALLER, TransactionStatus.COMPLETED),    // money the caller received
                 transaction(100001, CALLER, RECEIVER, TransactionStatus.COMPLETED))));  // money the caller sent
 
@@ -632,44 +632,55 @@ class PhonepeControllerTest {
 
     @Test
     void transactions_ignoreAnyPhoneNumberInTheRequest() throws Exception {
-        when(phonepeService.transactionsOf(eq(CALLER), anyInt(), anyInt(), any(), any())).thenReturn(pageOf(List.of()));
+        when(phonepeService.transactionsOf(eq(CALLER), anyInt(), anyInt(), any(), any(), any(), any())).thenReturn(pageOf(List.of()));
 
         mockMvc.perform(asCaller(get("/phonepe/transactions").param("phno", "9000000001")))
                 .andExpect(status().isOk());
 
-        verify(phonepeService).transactionsOf(eq(CALLER), anyInt(), anyInt(), any(), any());
-        verify(phonepeService, never()).transactionsOf(eq(9000000001L), anyInt(), anyInt(), any(), any());
+        verify(phonepeService).transactionsOf(eq(CALLER), anyInt(), anyInt(), any(), any(), any(), any());
+        verify(phonepeService, never()).transactionsOf(eq(9000000001L), anyInt(), anyInt(), any(), any(), any(), any());
     }
 
     @Test
     void transactions_passesPageAndSizeThrough() throws Exception {
-        when(phonepeService.transactionsOf(eq(CALLER), eq(2), eq(5), any(), any())).thenReturn(pageOf(List.of()));
+        when(phonepeService.transactionsOf(eq(CALLER), eq(2), eq(5), any(), any(), any(), any())).thenReturn(pageOf(List.of()));
 
         mockMvc.perform(asCaller(get("/phonepe/transactions")).param("page", "2").param("size", "5"))
                 .andExpect(status().isOk());
 
-        verify(phonepeService).transactionsOf(eq(CALLER), eq(2), eq(5), any(), any());
+        verify(phonepeService).transactionsOf(eq(CALLER), eq(2), eq(5), any(), any(), any(), any());
     }
 
     @Test
     void transactions_defaultsToPageZeroAndTheDefaultSize() throws Exception {
-        when(phonepeService.transactionsOf(eq(CALLER), eq(0), eq(PhonepeService.DEFAULT_PAGE_SIZE), any(), any())).thenReturn(pageOf(List.of()));
+        when(phonepeService.transactionsOf(eq(CALLER), eq(0), eq(PhonepeService.DEFAULT_PAGE_SIZE), any(), any(), any(), any())).thenReturn(pageOf(List.of()));
 
         mockMvc.perform(asCaller(get("/phonepe/transactions"))).andExpect(status().isOk());
 
-        verify(phonepeService).transactionsOf(eq(CALLER), eq(0), eq(PhonepeService.DEFAULT_PAGE_SIZE), any(), any());
+        verify(phonepeService).transactionsOf(eq(CALLER), eq(0), eq(PhonepeService.DEFAULT_PAGE_SIZE), any(), any(), any(), any());
     }
 
     @Test
     void transactions_passesFromAndToThrough() throws Exception {
         Instant from = Instant.parse("2026-01-01T00:00:00Z");
         Instant to = Instant.parse("2026-01-31T23:59:59Z");
-        when(phonepeService.transactionsOf(CALLER, 0, PhonepeService.DEFAULT_PAGE_SIZE, from, to)).thenReturn(pageOf(List.of()));
+        when(phonepeService.transactionsOf(CALLER, 0, PhonepeService.DEFAULT_PAGE_SIZE, from, to, null, null)).thenReturn(pageOf(List.of()));
 
         mockMvc.perform(asCaller(get("/phonepe/transactions")).param("from", from.toString()).param("to", to.toString()))
                 .andExpect(status().isOk());
 
-        verify(phonepeService).transactionsOf(CALLER, 0, PhonepeService.DEFAULT_PAGE_SIZE, from, to);
+        verify(phonepeService).transactionsOf(CALLER, 0, PhonepeService.DEFAULT_PAGE_SIZE, from, to, null, null);
+    }
+
+    @Test
+    void transactions_passesCounterpartyAndNoteContainsThrough() throws Exception {
+        when(phonepeService.transactionsOf(CALLER, 0, PhonepeService.DEFAULT_PAGE_SIZE, null, null, RECEIVER, "rent"))
+                .thenReturn(pageOf(List.of()));
+
+        mockMvc.perform(asCaller(get("/phonepe/transactions")).param("counterparty", String.valueOf(RECEIVER)).param("noteContains", "rent"))
+                .andExpect(status().isOk());
+
+        verify(phonepeService).transactionsOf(CALLER, 0, PhonepeService.DEFAULT_PAGE_SIZE, null, null, RECEIVER, "rent");
     }
 
     @Test

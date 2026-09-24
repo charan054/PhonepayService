@@ -83,8 +83,10 @@ public class PhonepeController {
                           @RequestParam(defaultValue = "0") int page,
                           @RequestParam(defaultValue = "" + PhonepeService.DEFAULT_PAGE_SIZE) int size,
                           @RequestParam(required = false) Instant from,
-                          @RequestParam(required = false) Instant to) {
-        return phonepeService.transactionsOf(caller, page, size, from, to).map(t -> TransactionResponse.from(t, caller));
+                          @RequestParam(required = false) Instant to,
+                          @RequestParam(required = false) Long counterparty,
+                          @RequestParam(required = false) String noteContains) {
+        return phonepeService.transactionsOf(caller, page, size, from, to, counterparty, noteContains).map(t -> TransactionResponse.from(t, caller));
     }
 
     @GetMapping("/transactions/{transactionId}")

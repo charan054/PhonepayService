@@ -135,12 +135,16 @@ public class PhonepeService {
 
     // ---------- history ----------
 
-    /** Everything this person paid, plus completed payments they received. Newest first. from/to are optional. */
-    public PageResponse<Transaction> transactionsOf(long viewer, int page, int size, Instant from, Instant to) {
+    /**
+     * Everything this person paid, plus completed payments they received. Newest first. from/to/counterparty/
+     * noteContains are all optional.
+     */
+    public PageResponse<Transaction> transactionsOf(long viewer, int page, int size, Instant from, Instant to,
+                                                      Long counterparty, String noteContains) {
         if (from != null && to != null && from.isAfter(to)) {
             throw new InvalidRequestException("'from' must not be after 'to'.");
         }
-        return PageResponse.of(transactions.findVisibleTo(viewer, from, to, pageable(page, size)));
+        return PageResponse.of(transactions.findVisibleTo(viewer, from, to, counterparty, noteContains, pageable(page, size)));
     }
 
     // page/size come straight from a query parameter, so out-of-range values are a caller mistake, not a crash.
