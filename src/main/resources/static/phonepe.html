@@ -354,6 +354,39 @@
             <button onclick="getTransactionById()">Search By ID</button>
         </div>
 
+        <div class="card">
+            <div class="card-title">
+                <div class="icon">👤</div>
+                <h2>Save Payee</h2>
+                <span class="method">POST</span>
+            </div>
+            <p>Save a phone number as a contact, so you don't have to retype it. Saving the same number again updates its label.</p>
+            <input type="number" id="payeePhno" placeholder="Payee phone number">
+            <input type="text" id="payeeNickname" placeholder="Label (optional, e.g. Mom)" maxlength="50">
+            <button class="green" onclick="savePayee()">Save Payee</button>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <div class="icon">📇</div>
+                <h2>My Payees</h2>
+                <span class="method">GET</span>
+            </div>
+            <p>View everyone you've saved as a payee.</p>
+            <button onclick="getPayees()">View Payees</button>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <div class="icon">🗑️</div>
+                <h2>Delete Payee</h2>
+                <span class="method">DELETE</span>
+            </div>
+            <p>Remove a saved payee.</p>
+            <input type="number" id="deletePayeePhno" placeholder="Payee phone number">
+            <button onclick="deletePayee()">Delete Payee</button>
+        </div>
+
     </section>
 
     <div id="status" class="status-panel">
@@ -635,6 +668,34 @@
       const data = await apiCall(url);
       showStatus("Transactions loaded successfully. Result opened in new tab.", "success");
       openResultTab("My Transactions", data.content, data);
+    }
+
+    async function savePayee() {
+      if (!requireLogin()) return;
+      const phno = document.getElementById("payeePhno").value;
+      const nickname = document.getElementById("payeeNickname").value;
+      if (!phno) return showStatus("Please enter a payee phone number.", "error");
+
+      const data = await apiCall(`${BASE_URL}/payees`, jsonRequest("POST", { payeePhno: Number(phno), nickname: nickname || null }));
+      showStatus("Payee saved successfully. Result opened in new tab.", "success");
+      openResultTab("Save Payee", data);
+    }
+
+    async function getPayees() {
+      if (!requireLogin()) return;
+
+      const data = await apiCall(`${BASE_URL}/payees`);
+      showStatus("Payees loaded successfully. Result opened in new tab.", "success");
+      openResultTab("My Payees", data);
+    }
+
+    async function deletePayee() {
+      if (!requireLogin()) return;
+      const phno = document.getElementById("deletePayeePhno").value;
+      if (!phno) return showStatus("Please enter a payee phone number.", "error");
+
+      await apiCall(`${BASE_URL}/payees/${encodeURIComponent(phno)}`, { method: "DELETE" });
+      showStatus("Payee deleted successfully.", "success");
     }
 
     async function getTransactionById() {
