@@ -107,6 +107,12 @@ public class BankGateway {
         } catch (FeignException.Conflict e) {
             throw new BankConflictException("The bank was busy with another request on this account. Please retry.");
         } catch (FeignException.FeignClientException e) {
+            // Currently unreachable (BankService.withdrawByphno/transfer never check lockedUntil), but handled
+            // explicitly anyway - matching login()'s own 423 handling - so a locked account is never mislabeled
+            // as a plain refusal (BalanceException/400) if that ever changes on the bank's side.
+            if (e.status() == 423) {
+                throw new AccountLockedException(orDefault(e.contentUTF8(), "This account is locked. Please try again later."));
+            }
             throw refused(e);
         } catch (RetryableException e) {
             if (neverConnected(e)) {
