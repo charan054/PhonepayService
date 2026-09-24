@@ -496,6 +496,8 @@
             <input type="number" id="transactionsSize" placeholder="Page size (default 20)" min="1" max="100" />
             <input type="datetime-local" id="transactionsFrom" placeholder="From (optional)" />
             <input type="datetime-local" id="transactionsTo" placeholder="To (optional)" />
+            <input type="number" id="transactionsCounterparty" placeholder="Payee phone number (optional)" />
+            <input type="text" id="transactionsNoteContains" placeholder="Note contains (optional)" maxlength="140" />
             <button onclick="getMyTransactions()">View Transactions</button>
             <div class="pager">
                 <button type="button" class="pager-btn" id="transactionsPrevBtn" onclick="changeTransactionsPage(-1)" disabled>&lsaquo; Prev</button>
@@ -881,10 +883,14 @@
       const size = document.getElementById("transactionsSize").value || 20;
       const from = document.getElementById("transactionsFrom").value;
       const to = document.getElementById("transactionsTo").value;
+      const counterparty = document.getElementById("transactionsCounterparty").value;
+      const noteContains = document.getElementById("transactionsNoteContains").value;
 
       let url = `${BASE_URL}/transactions?page=${transactionsPage}&size=${encodeURIComponent(size)}`;
       if (from) url += `&from=${encodeURIComponent(new Date(from).toISOString())}`;
       if (to) url += `&to=${encodeURIComponent(new Date(to).toISOString())}`;
+      if (counterparty) url += `&counterparty=${encodeURIComponent(counterparty)}`;
+      if (noteContains) url += `&noteContains=${encodeURIComponent(noteContains)}`;
 
       const data = await apiCall(url);
       transactionsPage = data.page;
