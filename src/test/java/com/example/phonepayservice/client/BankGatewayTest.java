@@ -87,8 +87,8 @@ class BankGatewayTest {
         when(bank.displayUser(SERVICE_KEY, PHNO)).thenReturn(new BankUser());
         gateway().findUser(PHNO);
 
-        verify(bank).withdrawByphno(SERVICE_KEY, PHNO, 10.0);
-        verify(bank).depositByphno(SERVICE_KEY, PHNO, 10.0);
+        verify(bank).withdrawByphno(SERVICE_KEY, PHNO, new BigDecimal("10"));
+        verify(bank).depositByphno(SERVICE_KEY, PHNO, new BigDecimal("10"));
         verify(bank).displayUser(SERVICE_KEY, PHNO);
     }
 
@@ -135,21 +135,21 @@ class BankGatewayTest {
     void withdraw_sendsThePhoneAndTheAmount() {
         gateway().withdraw(PHNO, new BigDecimal("250.50"));
 
-        verify(bank).withdrawByphno(SERVICE_KEY, PHNO, 250.5);
+        verify(bank).withdrawByphno(SERVICE_KEY, PHNO, new BigDecimal("250.50"));
     }
 
     @Test
     void deposit_sendsThePhoneAndTheAmount() {
         gateway().deposit(PHNO, new BigDecimal("75.00"));
 
-        verify(bank).depositByphno(SERVICE_KEY, PHNO, 75.0);
+        verify(bank).depositByphno(SERVICE_KEY, PHNO, new BigDecimal("75.00"));
     }
 
     // ---------- refused by the bank: nothing happened ----------
 
     @Test
     void withdraw_insufficientFunds_isRefusedWithTheBanksMessage() {
-        when(bank.withdrawByphno(anyString(), any(Long.class), any(Double.class))).thenThrow(bankAnswers(400, "Insufficient Funds"));
+        when(bank.withdrawByphno(anyString(), any(Long.class), any(BigDecimal.class))).thenThrow(bankAnswers(400, "Insufficient Funds"));
 
         BalanceException ex = assertThrows(BalanceException.class, () -> gateway().withdraw(PHNO, new BigDecimal("500")));
 
@@ -158,7 +158,7 @@ class BankGatewayTest {
 
     @Test
     void withdraw_refusedWithNoExplanation_getsAGenericMessage() {
-        when(bank.withdrawByphno(anyString(), any(Long.class), any(Double.class))).thenThrow(bankAnswers(400, ""));
+        when(bank.withdrawByphno(anyString(), any(Long.class), any(BigDecimal.class))).thenThrow(bankAnswers(400, ""));
 
         BalanceException ex = assertThrows(BalanceException.class, () -> gateway().withdraw(PHNO, new BigDecimal("5")));
 
@@ -167,14 +167,14 @@ class BankGatewayTest {
 
     @Test
     void withdraw_bankSaysUserNotFound_isUserNotExist() {
-        when(bank.withdrawByphno(anyString(), any(Long.class), any(Double.class))).thenThrow(bankAnswers(400, "User not found"));
+        when(bank.withdrawByphno(anyString(), any(Long.class), any(BigDecimal.class))).thenThrow(bankAnswers(400, "User not found"));
 
         assertThrows(UserNotExistException.class, () -> gateway().withdraw(PHNO, new BigDecimal("5")));
     }
 
     @Test
     void deposit_bank400_isRefused() {
-        when(bank.depositByphno(anyString(), any(Long.class), any(Double.class))).thenThrow(bankAnswers(400, "Amount too low"));
+        when(bank.depositByphno(anyString(), any(Long.class), any(BigDecimal.class))).thenThrow(bankAnswers(400, "Amount too low"));
 
         BalanceException ex = assertThrows(BalanceException.class, () -> gateway().deposit(PHNO, new BigDecimal("5")));
 
@@ -183,7 +183,7 @@ class BankGatewayTest {
 
     @Test
     void anyOtherClientError_isRefusedToo() {
-        when(bank.withdrawByphno(anyString(), any(Long.class), any(Double.class))).thenThrow(bankAnswers(403, "Forbidden"));
+        when(bank.withdrawByphno(anyString(), any(Long.class), any(BigDecimal.class))).thenThrow(bankAnswers(403, "Forbidden"));
 
         assertThrows(BalanceException.class, () -> gateway().withdraw(PHNO, new BigDecimal("5")));
     }
@@ -192,7 +192,7 @@ class BankGatewayTest {
 
     @Test
     void bank409_isAConflict_notAFailure() {
-        when(bank.depositByphno(anyString(), any(Long.class), any(Double.class)))
+        when(bank.depositByphno(anyString(), any(Long.class), any(BigDecimal.class)))
                 .thenThrow(bankAnswers(409, "Another request changed the same data at the same time. Please retry."));
 
         assertThrows(BankConflictException.class, () -> gateway().deposit(PHNO, new BigDecimal("5")));
@@ -202,21 +202,21 @@ class BankGatewayTest {
 
     @Test
     void connectionRefused_meansNothingWasSent() {
-        when(bank.withdrawByphno(anyString(), any(Long.class), any(Double.class))).thenThrow(ioProblem(new ConnectException("Connection refused")));
+        when(bank.withdrawByphno(anyString(), any(Long.class), any(BigDecimal.class))).thenThrow(ioProblem(new ConnectException("Connection refused")));
 
         assertThrows(BankUnavailableException.class, () -> gateway().withdraw(PHNO, new BigDecimal("5")));
     }
 
     @Test
     void unknownHost_meansNothingWasSent() {
-        when(bank.withdrawByphno(anyString(), any(Long.class), any(Double.class))).thenThrow(ioProblem(new UnknownHostException("bank")));
+        when(bank.withdrawByphno(anyString(), any(Long.class), any(BigDecimal.class))).thenThrow(ioProblem(new UnknownHostException("bank")));
 
         assertThrows(BankUnavailableException.class, () -> gateway().withdraw(PHNO, new BigDecimal("5")));
     }
 
     @Test
     void connectTimeout_meansNothingWasSent() {
-        when(bank.withdrawByphno(anyString(), any(Long.class), any(Double.class))).thenThrow(ioProblem(new SocketTimeoutException("Connect timed out")));
+        when(bank.withdrawByphno(anyString(), any(Long.class), any(BigDecimal.class))).thenThrow(ioProblem(new SocketTimeoutException("Connect timed out")));
 
         assertThrows(BankUnavailableException.class, () -> gateway().withdraw(PHNO, new BigDecimal("5")));
     }
@@ -225,14 +225,14 @@ class BankGatewayTest {
 
     @Test
     void readTimeout_outcomeIsUnknown() {
-        when(bank.withdrawByphno(anyString(), any(Long.class), any(Double.class))).thenThrow(ioProblem(new SocketTimeoutException("Read timed out")));
+        when(bank.withdrawByphno(anyString(), any(Long.class), any(BigDecimal.class))).thenThrow(ioProblem(new SocketTimeoutException("Read timed out")));
 
         assertThrows(BankOutcomeUnknownException.class, () -> gateway().withdraw(PHNO, new BigDecimal("5")));
     }
 
     @Test
     void connectionDroppedMidRequest_outcomeIsUnknown() {
-        when(bank.depositByphno(anyString(), any(Long.class), any(Double.class))).thenThrow(ioProblem(new java.net.SocketException("Connection reset")));
+        when(bank.depositByphno(anyString(), any(Long.class), any(BigDecimal.class))).thenThrow(ioProblem(new java.net.SocketException("Connection reset")));
 
         assertThrows(BankOutcomeUnknownException.class, () -> gateway().deposit(PHNO, new BigDecimal("5")));
     }
@@ -240,14 +240,14 @@ class BankGatewayTest {
     @Test
     void bankServerError_outcomeIsUnknown() {
         // a 500 can be sent AFTER the bank already committed, so it must never be treated as "nothing happened"
-        when(bank.withdrawByphno(anyString(), any(Long.class), any(Double.class))).thenThrow(bankAnswers(500, "Internal Server Error"));
+        when(bank.withdrawByphno(anyString(), any(Long.class), any(BigDecimal.class))).thenThrow(bankAnswers(500, "Internal Server Error"));
 
         assertThrows(BankOutcomeUnknownException.class, () -> gateway().withdraw(PHNO, new BigDecimal("5")));
     }
 
     @Test
     void bankGatewayTimeout_outcomeIsUnknown() {
-        when(bank.depositByphno(anyString(), any(Long.class), any(Double.class))).thenThrow(bankAnswers(504, "Gateway Timeout"));
+        when(bank.depositByphno(anyString(), any(Long.class), any(BigDecimal.class))).thenThrow(bankAnswers(504, "Gateway Timeout"));
 
         assertThrows(BankOutcomeUnknownException.class, () -> gateway().deposit(PHNO, new BigDecimal("5")));
     }

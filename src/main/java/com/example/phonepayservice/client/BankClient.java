@@ -12,6 +12,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 
+import java.math.BigDecimal;
+
 // Talk to the bank through BankGateway, which supplies the X-Service-Key header and turns the bank's answers
 // and failures into meaningful exceptions. The Bank app now requires this header on every one of these calls,
 // EXCEPT login: POST /bank/login is public on the bank's side, because that call itself is the credential check.
@@ -26,11 +28,11 @@ public interface BankClient {
 
     @PutMapping("/bank/withdrawByphno")
     String withdrawByphno(@RequestHeader("X-Service-Key") String serviceKey,
-                          @RequestParam("phno") long phno, @RequestParam("balance") double balance);
+                          @RequestParam("phno") long phno, @RequestParam("balance") BigDecimal balance);
 
     @PutMapping("/bank/depositByphno")
     String depositByphno(@RequestHeader("X-Service-Key") String serviceKey,
-                         @RequestParam("phno") long phno, @RequestParam("balance") double balance);
+                         @RequestParam("phno") long phno, @RequestParam("balance") BigDecimal balance);
 
     // Moves money between two accounts atomically; safe to resend with the same idempotencyKey.
     @PostMapping("/bank/transfer")
