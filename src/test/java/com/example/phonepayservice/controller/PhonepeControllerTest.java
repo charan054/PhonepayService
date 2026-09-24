@@ -4,6 +4,7 @@ import com.example.phonepayservice.configuration.ClockConfig;
 import com.example.phonepayservice.configuration.WebConfig;
 import com.example.phonepayservice.dto.BalanceResponse;
 import com.example.phonepayservice.dto.LoginResponse;
+import com.example.phonepayservice.dto.MoneyRequestResponse;
 import com.example.phonepayservice.dto.PageResponse;
 import com.example.phonepayservice.dto.PayeeResponse;
 import com.example.phonepayservice.dto.ProfileResponse;
@@ -15,11 +16,13 @@ import com.example.phonepayservice.exception.BankConflictException;
 import com.example.phonepayservice.exception.BankUnavailableException;
 import com.example.phonepayservice.exception.InvalidCredentialsException;
 import com.example.phonepayservice.exception.InvalidRequestException;
+import com.example.phonepayservice.exception.MoneyRequestNotFoundException;
 import com.example.phonepayservice.exception.PayeeNotFoundException;
 import com.example.phonepayservice.exception.TransactionNotFoundException;
 import com.example.phonepayservice.exception.TransferFailedException;
 import com.example.phonepayservice.exception.UserNotExistException;
 import com.example.phonepayservice.exception.UserNotRegisteredException;
+import com.example.phonepayservice.service.MoneyRequestService;
 import com.example.phonepayservice.service.PayeeService;
 import com.example.phonepayservice.service.PhonepeService;
 import com.example.phonepayservice.service.SessionService;
@@ -75,6 +78,8 @@ class PhonepeControllerTest {
     @MockitoBean
     private PayeeService payeeService;
     @MockitoBean
+    private MoneyRequestService moneyRequestService;
+    @MockitoBean
     private SessionService sessionService;
 
     @BeforeEach
@@ -115,7 +120,11 @@ class PhonepeControllerTest {
                 post("/phonepe/sendmoney").contentType(MediaType.APPLICATION_JSON).content("{\"receiverPhno\":9123456789,\"amount\":10}"),
                 post("/phonepe/makepayment").contentType(MediaType.APPLICATION_JSON).content("{\"amount\":10}"),
                 get("/phonepe/transactions"),
-                get("/phonepe/transactions/100000"));
+                get("/phonepe/transactions/100000"),
+                post("/phonepe/requests").contentType(MediaType.APPLICATION_JSON).content("{\"payerPhno\":9123456789,\"amount\":10}"),
+                get("/phonepe/requests"),
+                post("/phonepe/requests/1/approve"),
+                post("/phonepe/requests/1/decline"));
     }
 
     @Test
@@ -808,6 +817,114 @@ class PhonepeControllerTest {
         mockMvc.perform(asCaller(delete("/phonepe/payees/9123456789")))
                 .andExpect(status().isNotFound())
                 .andExpect(content().string("No saved payee with that phone number"));
+    }
+
+    // ============ POST /phonepe/requests ============
+
+    private MoneyRequestResponse moneyRequest(long id, long requesterPhno, long payerPhno, String status, String direction) {
+        return new MoneyRequestResponse(id, requesterPhno, payerPhno, new BigDecimal("250.00"), "rent",
+                status, direction, NOW, status.equals("PENDING") ? null : NOW, status.equals("APPROVED") ? 555L : null);
+    }
+
+    @Test
+    void createRequest_returnsTheCreatedRequest() throws Exception {
+        when(moneyRequestService.create(CALLER, RECEIVER, new BigDecimal("250"), "rent"))
+                .thenReturn(moneyRequest(1, CALLER, RECEIVER, "PENDING", "OUTGOING"));
+
+        mockMvc.perform(asCaller(post("/phonepe/requests")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payerPhno\":9123456789,\"amount\":250,\"note\":\"rent\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(1))
+                .andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(jsonPath("$.direction").value("OUTGOING"));
+    }
+
+    @Test
+    void createRequest_invalidPayerPhoneNumber_returns400() throws Exception {
+        mockMvc.perform(asCaller(post("/phonepe/requests")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payerPhno\":123,\"amount\":250}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("Invalid mobile number"));
+
+        verifyNoInteractions(moneyRequestService);
+    }
+
+    @Test
+    void createRequest_yourself_returns400() throws Exception {
+        when(moneyRequestService.create(CALLER, CALLER, new BigDecimal("250"), null))
+                .thenThrow(new InvalidRequestException("You cannot request money from yourself"));
+
+        mockMvc.perform(asCaller(post("/phonepe/requests")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payerPhno\":9876543210,\"amount\":250}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("You cannot request money from yourself"));
+    }
+
+    // ============ GET /phonepe/requests ============
+
+    @Test
+    void requests_returnsWhatTheCallerIsInvolvedIn() throws Exception {
+        when(moneyRequestService.listFor(CALLER)).thenReturn(List.of(
+                moneyRequest(2, CALLER, RECEIVER, "PENDING", "OUTGOING"),
+                moneyRequest(1, RECEIVER, CALLER, "PENDING", "INCOMING")));
+
+        mockMvc.perform(asCaller(get("/phonepe/requests")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].direction").value("OUTGOING"))
+                .andExpect(jsonPath("$[1].direction").value("INCOMING"));
+    }
+
+    // ============ POST /phonepe/requests/{id}/approve ============
+
+    @Test
+    void approveRequest_movesMoney_returnsTheApprovedRequest() throws Exception {
+        when(moneyRequestService.approve(CALLER, 1)).thenReturn(moneyRequest(1, RECEIVER, CALLER, "APPROVED", "INCOMING"));
+
+        mockMvc.perform(asCaller(post("/phonepe/requests/1/approve")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("APPROVED"))
+                .andExpect(jsonPath("$.resultingTransactionId").value(555));
+    }
+
+    @Test
+    void approveRequest_notFound_returns404() throws Exception {
+        when(moneyRequestService.approve(CALLER, 1)).thenThrow(new MoneyRequestNotFoundException("Money request not found"));
+
+        mockMvc.perform(asCaller(post("/phonepe/requests/1/approve")))
+                .andExpect(status().isNotFound())
+                .andExpect(content().string("Money request not found"));
+    }
+
+    @Test
+    void approveRequest_paymentDidNotComplete_returns502() throws Exception {
+        when(moneyRequestService.approve(CALLER, 1))
+                .thenThrow(new TransferFailedException("This request's payment did not complete. Please try approving it again."));
+
+        mockMvc.perform(asCaller(post("/phonepe/requests/1/approve")))
+                .andExpect(status().isBadGateway());
+    }
+
+    // ============ POST /phonepe/requests/{id}/decline ============
+
+    @Test
+    void declineRequest_returnsTheDeclinedRequest() throws Exception {
+        when(moneyRequestService.decline(CALLER, 1)).thenReturn(moneyRequest(1, RECEIVER, CALLER, "DECLINED", "INCOMING"));
+
+        mockMvc.perform(asCaller(post("/phonepe/requests/1/decline")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("DECLINED"));
+
+        verify(moneyRequestService).decline(CALLER, 1);
+    }
+
+    @Test
+    void declineRequest_alreadyResolved_returns400() throws Exception {
+        when(moneyRequestService.decline(CALLER, 1)).thenThrow(new InvalidRequestException("This request has already been resolved"));
+
+        mockMvc.perform(asCaller(post("/phonepe/requests/1/decline")))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("This request has already been resolved"));
     }
 
     // ============ the old, unauthenticated endpoints are gone ============
