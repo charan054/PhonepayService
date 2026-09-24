@@ -76,6 +76,16 @@
           gap:22px;
         }
 
+        .login-wrap{
+          display:flex;
+          justify-content:center;
+        }
+
+        .login-card{
+          width:100%;
+          max-width:420px;
+        }
+
         .card{
           background:rgba(255,255,255,.95);
           border:1px solid rgba(255,255,255,.9);
@@ -252,7 +262,7 @@
     <h1>CharanPe Dashboard</h1>
     <p>Manage payments, transactions, balances, profile and transfers with a clean pastel skyblue UI.</p>
     <div>
-        <div class="session-bar">
+        <div class="session-bar" id="sessionBar" style="display:none">
             <span id="sessionStatus">Not logged in</span>
             <button onclick="logoutUser()">Logout</button>
         </div>
@@ -260,19 +270,8 @@
 </header>
 
 <main class="container">
-    <section class="grid">
-
-        <div class="card">
-            <div class="card-title">
-                <div class="icon">👤</div>
-                <h2>Profile</h2>
-                <span class="method">GET</span>
-            </div>
-            <p>View your own CharanPe bank profile details.</p>
-            <button onclick="getProfile()">View Profile</button>
-        </div>
-
-        <div class="card">
+    <section class="login-wrap" id="loginSection">
+        <div class="card login-card">
             <div class="card-title">
                 <div class="icon">🔐</div>
                 <h2>Login User</h2>
@@ -283,15 +282,18 @@
             <input type="password" id="loginPin" placeholder="PIN">
             <button class="purple" onclick="loginUser()">Login User</button>
         </div>
+    </section>
+
+    <section class="grid" id="dashboardSection" style="display:none">
 
         <div class="card">
             <div class="card-title">
-                <div class="icon">🚪</div>
-                <h2>Logout</h2>
-                <span class="method">POST</span>
+                <div class="icon">👤</div>
+                <h2>Profile</h2>
+                <span class="method">GET</span>
             </div>
-            <p>End your login. Do this when you finish, especially on a shared computer.</p>
-            <button class="purple" onclick="logoutUser()">Logout</button>
+            <p>View your own CharanPe bank profile details.</p>
+            <button onclick="getProfile()">View Profile</button>
         </div>
 
         <div class="card">
@@ -426,8 +428,14 @@
       refreshPayeeSelect();
     }
 
+    // Single source of truth for which screen is showing: logged out sees only the login card, logged in sees
+    // the feature dashboard and the one logout control in the header - never both at once.
     function updateSessionBar() {
-      document.getElementById("sessionStatus").textContent = sessionToken ? `Logged in as ${sessionName}` : "Not logged in";
+      const loggedIn = !!sessionToken;
+      document.getElementById("sessionBar").style.display = loggedIn ? "inline-flex" : "none";
+      document.getElementById("sessionStatus").textContent = loggedIn ? `Logged in as ${sessionName}` : "Not logged in";
+      document.getElementById("loginSection").style.display = loggedIn ? "none" : "flex";
+      document.getElementById("dashboardSection").style.display = loggedIn ? "grid" : "none";
     }
 
     function jsonRequest(method, body) {
