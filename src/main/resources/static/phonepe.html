@@ -444,7 +444,7 @@
                 <h2>Profile</h2>
                 <span class="method">GET</span>
             </div>
-            <p>View your own CharanPe bank profile details.</p>
+            <p>View your own CharanPe bank profile details, including your current balance.</p>
             <button onclick="getProfile()">View Profile</button>
         </div>
 
@@ -474,16 +474,6 @@
             <input type="number" id="sendAmount" placeholder="Enter amount" min="0.01" step="0.01">
             <input type="text" id="sendNote" placeholder="Note (optional, e.g. rent)" maxlength="140">
             <button class="green" onclick="sendMoney()">Send Money</button>
-        </div>
-
-        <div class="card">
-            <div class="card-title">
-                <div class="icon">💰</div>
-                <h2>Check Balance</h2>
-                <span class="method">GET</span>
-            </div>
-            <p>Check your available balance.</p>
-            <button onclick="checkBalance()">Check Balance</button>
         </div>
 
         <div class="card">
@@ -856,14 +846,6 @@
           { amount: Number(amount), note: note || null, idempotencyKey: randomIdempotencyKey() }));
       showStatus("Payment completed successfully. Result opened in new tab.", "success");
       openResultTab("Make Payment", data);
-    }
-
-    async function checkBalance() {
-      if (!requireLogin()) return;
-
-      const data = await apiCall(`${BASE_URL}/balance`);
-      showStatus("Balance fetched successfully. Result opened in new tab.", "success");
-      openResultTab("Check Balance", { availableBalance: data.balance });
     }
 
     let transactionsPage = 0;
