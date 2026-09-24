@@ -42,6 +42,11 @@ public class GlobalExceptionHandler {
         return reply(HttpStatus.NOT_FOUND, e.getMessage());
     }
 
+    @ExceptionHandler(PayeeNotFoundException.class)
+    public ResponseEntity<String> handlePayeeNotFound(PayeeNotFoundException e) {
+        return reply(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
     // bad input
     @ExceptionHandler(InvalidRequestException.class)
     public ResponseEntity<String> handleInvalidRequest(InvalidRequestException e) {
