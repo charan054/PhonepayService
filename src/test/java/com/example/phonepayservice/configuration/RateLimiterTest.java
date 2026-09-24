@@ -7,6 +7,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -64,5 +65,33 @@ class RateLimiterTest {
         clock.now = NOW.plus(Duration.ofMinutes(1));   // exactly one window later, not yet past it
 
         assertFalse(limiter.allow("same-key"), "a call exactly window-old has not yet expired");
+    }
+
+    // ---------- the map must not grow forever ----------
+
+    @Test
+    void aKeyThatIsNeverCalledAgain_isEventuallyRemovedFromTheMap() {
+        RateLimiter limiter = new RateLimiter(1, Duration.ofMinutes(1), clock);
+        limiter.allow("scanner-ip");
+        assertEquals(1, limiter.trackedKeyCount());
+
+        // Nobody ever calls allow("scanner-ip") again, but its one hit has long since expired and a cleanup
+        // sweep - piggybacked on some unrelated request - is now due.
+        clock.now = NOW.plus(Duration.ofMinutes(11));
+        limiter.allow("someone-else");
+
+        assertEquals(1, limiter.trackedKeyCount(), "scanner-ip should be gone, leaving only someone-else");
+    }
+
+    @Test
+    void cleanupSweep_doesNotRemoveAKeyThatIsStillWithinItsWindow() {
+        RateLimiter limiter = new RateLimiter(5, Duration.ofMinutes(15), clock);
+        limiter.allow("alice");
+
+        // Past the cleanup interval, but alice's hit is still within her (longer) 15-minute window.
+        clock.now = NOW.plus(Duration.ofMinutes(11));
+        limiter.allow("bob");
+
+        assertEquals(2, limiter.trackedKeyCount(), "alice is still active and must not be swept away");
     }
 }
