@@ -262,6 +262,127 @@
           box-shadow:none;
         }
 
+        .payee-list{
+          margin-top:4px;
+          display:flex;
+          flex-direction:column;
+          gap:8px;
+        }
+
+        .payee-row{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:10px;
+          background:#f0f9ff;
+          border:1px solid var(--border);
+          border-radius:12px;
+          padding:10px 12px;
+        }
+
+        .payee-row .payee-name{
+          font-weight:800;
+          font-size:14px;
+          color:var(--text);
+          overflow:hidden;
+          text-overflow:ellipsis;
+          white-space:nowrap;
+        }
+
+        .payee-row .payee-delete{
+          width:auto;
+          flex-shrink:0;
+          padding:7px 11px;
+          font-size:13px;
+          background:var(--danger);
+          box-shadow:none;
+        }
+
+        .payee-empty{
+          color:var(--muted);
+          font-size:14px;
+          font-weight:700;
+        }
+
+        .pager{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:10px;
+          margin-top:12px;
+        }
+
+        .pager-btn{
+          width:auto;
+          padding:9px 14px;
+          font-size:13px;
+        }
+
+        .pager-btn:disabled{
+          opacity:.45;
+          cursor:not-allowed;
+          transform:none;
+        }
+
+        .pager-label{
+          font-size:13px;
+          font-weight:800;
+          color:var(--muted);
+          white-space:nowrap;
+        }
+
+        .tx-list{
+          margin-top:12px;
+          display:flex;
+          flex-direction:column;
+          gap:8px;
+        }
+
+        .tx-row{
+          background:#f0f9ff;
+          border:1px solid var(--border);
+          border-radius:12px;
+          padding:10px 12px;
+        }
+
+        .tx-row-top{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:10px;
+        }
+
+        .tx-amount{
+          font-weight:900;
+          font-size:14px;
+        }
+        .tx-amount.debit{color:var(--danger)}
+        .tx-amount.credit{color:var(--success)}
+
+        .tx-row-meta{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:10px;
+          margin-top:6px;
+          font-size:12px;
+          color:var(--muted);
+          font-weight:700;
+        }
+
+        .tx-note{
+          margin-top:6px;
+          font-size:12px;
+          color:var(--muted);
+          font-style:italic;
+        }
+
+        .tx-empty{
+          color:var(--muted);
+          font-size:14px;
+          font-weight:700;
+        }
+
         .status-badge{
           display:inline-block;
           padding:4px 10px;
@@ -362,11 +483,16 @@
                 <span class="method">GET</span>
             </div>
             <p>View the payments you sent and the money you received, newest first.</p>
-            <input type="number" id="transactionsPage" placeholder="Page (default 0)" min="0" />
             <input type="number" id="transactionsSize" placeholder="Page size (default 20)" min="1" max="100" />
             <input type="datetime-local" id="transactionsFrom" placeholder="From (optional)" />
             <input type="datetime-local" id="transactionsTo" placeholder="To (optional)" />
             <button onclick="getMyTransactions()">View Transactions</button>
+            <div class="pager">
+                <button type="button" class="pager-btn" id="transactionsPrevBtn" onclick="changeTransactionsPage(-1)" disabled>&lsaquo; Prev</button>
+                <span id="transactionsPageLabel" class="pager-label"></span>
+                <button type="button" class="pager-btn" id="transactionsNextBtn" onclick="changeTransactionsPage(1)" disabled>Next &rsaquo;</button>
+            </div>
+            <div id="transactionsList" class="tx-list"></div>
         </div>
 
         <div class="card">
@@ -378,6 +504,7 @@
             <p>Find one of your transactions using its transaction id.</p>
             <input type="number" id="transactionId" placeholder="Enter transaction ID">
             <button onclick="getTransactionById()">Search By ID</button>
+            <div id="transactionByIdResult" class="tx-list"></div>
         </div>
 
         <div class="card">
@@ -398,19 +525,9 @@
                 <h2>My Payees</h2>
                 <span class="method">GET</span>
             </div>
-            <p>View everyone you've saved as a payee.</p>
-            <button onclick="getPayees()">View Payees</button>
-        </div>
-
-        <div class="card">
-            <div class="card-title">
-                <div class="icon">🗑️</div>
-                <h2>Delete Payee</h2>
-                <span class="method">DELETE</span>
-            </div>
-            <p>Remove a saved payee.</p>
-            <input type="number" id="deletePayeePhno" placeholder="Payee phone number">
-            <button onclick="deletePayee()">Delete Payee</button>
+            <p>Everyone you've saved as a payee. Click the trash icon to remove one.</p>
+            <button onclick="getPayees()">Refresh Payees</button>
+            <div id="payeeList" class="payee-list"></div>
         </div>
 
     </section>
@@ -445,6 +562,7 @@
       } catch (e) { /* storage blocked: the login simply lasts until the page is reloaded */ }
       updateSessionBar();
       refreshPayeeSelect();
+      getPayees();
     }
 
     // Single source of truth for which screen is showing: logged out sees only the login card, logged in sees
@@ -461,7 +579,7 @@
       return { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
     }
 
-    async function apiCall(url, options = {}) {
+    async function apiCall(url, options = {}, { showErrorTab = true } = {}) {
       try {
         showStatus("Processing request...", "");
         const headers = { ...(options.headers || {}) };
@@ -481,7 +599,7 @@
         return JSON.parse(text);
       } catch (error) {
         showStatus("Request failed: " + error.message, "error");
-        openResultTab("Request Failed", { error: error.message });
+        if (showErrorTab) openResultTab("Request Failed", { error: error.message });
         throw error;
       }
     }
@@ -643,12 +761,15 @@
       const pin = document.getElementById("loginPin").value;
       if (!phno || !pin) return showStatus("Please enter phone number and PIN.", "error");
 
-      const data = await apiCall(`${BASE_URL}/login`, jsonRequest("POST", { phno: Number(phno), pin }));
-      storeSession(data.token, data.name);
-      document.getElementById("loginPin").value = "";
-      showStatus(`Logged in as ${data.name}. Result opened in new tab.`, "success");
-      // the token itself is never shown or printed
-      openResultTab("Login User", { message: "Login completed successfully", name: data.name, phoneNumber: data.phno, sessionExpiresAt: data.expiresAt });
+      try {
+        const data = await apiCall(`${BASE_URL}/login`, jsonRequest("POST", { phno: Number(phno), pin }), { showErrorTab: false });
+        storeSession(data.token, data.name);
+        document.getElementById("loginPin").value = "";
+        // the token itself is never shown or printed
+        showStatus(`Logged in as ${data.name}.`, "success");
+      } catch (error) {
+        // apiCall already showed the reason in the toast; stay on the login page, nothing else to do
+      }
     }
 
     async function logoutUser() {
@@ -725,20 +846,75 @@
       openResultTab("Make Payment", data);
     }
 
+    let transactionsPage = 0;
+
     async function getMyTransactions() {
+      transactionsPage = 0;
+      await loadTransactionsPage();
+    }
+
+    function changeTransactionsPage(delta) {
+      transactionsPage += delta;
+      loadTransactionsPage();
+    }
+
+    async function loadTransactionsPage() {
       if (!requireLogin()) return;
-      const page = document.getElementById("transactionsPage").value || 0;
       const size = document.getElementById("transactionsSize").value || 20;
       const from = document.getElementById("transactionsFrom").value;
       const to = document.getElementById("transactionsTo").value;
 
-      let url = `${BASE_URL}/transactions?page=${encodeURIComponent(page)}&size=${encodeURIComponent(size)}`;
+      let url = `${BASE_URL}/transactions?page=${transactionsPage}&size=${encodeURIComponent(size)}`;
       if (from) url += `&from=${encodeURIComponent(new Date(from).toISOString())}`;
       if (to) url += `&to=${encodeURIComponent(new Date(to).toISOString())}`;
 
       const data = await apiCall(url);
-      showStatus("Transactions loaded successfully. Result opened in new tab.", "success");
-      openResultTab("My Transactions", data.content, data);
+      transactionsPage = data.page;
+      updateTransactionsPager(data);
+      renderTransactionList("transactionsList", data.content);
+    }
+
+    function updateTransactionsPager(data) {
+      const totalPages = Math.max(data.totalPages, 1);
+      document.getElementById("transactionsPageLabel").textContent = `Page ${data.page + 1} of ${totalPages}`;
+      document.getElementById("transactionsPrevBtn").disabled = data.page <= 0;
+      document.getElementById("transactionsNextBtn").disabled = data.page + 1 >= totalPages;
+    }
+
+    function formatDate(iso) {
+      try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
+    }
+
+    // Every field on a transaction is already visible to its own payer/receiver (see TransactionResponse's
+    // javadoc - internal details like failure reasons are never sent down), so a row already shows everything
+    // there is to show; there is no separate "detail view" to expand into.
+    function renderTransactionRow(t) {
+      const isDebit = t.direction === "DEBIT";
+      const counterparty = isDebit ? t.receiverPhno : t.payerPhno;
+      const counterpartyLabel = counterparty ? `${isDebit ? "To" : "From"} ${counterparty}` : (isDebit ? "Payment" : "-");
+      const statusClass = "status-" + String(t.status).toLowerCase();
+      return `
+        <div class="tx-row">
+          <div class="tx-row-top">
+            <span class="tx-amount ${isDebit ? "debit" : "credit"}">${isDebit ? "-" : "+"}${escapeHtml(String(t.amount))}</span>
+            <span class="status-badge ${statusClass}">${escapeHtml(t.status)}</span>
+          </div>
+          <div class="tx-row-meta">
+            <span>${escapeHtml(t.mode)} &middot; ${escapeHtml(counterpartyLabel)}</span>
+            <span>${escapeHtml(formatDate(t.createdAt))}</span>
+          </div>
+          ${t.note ? `<div class="tx-note">${escapeHtml(t.note)}</div>` : ""}
+        </div>
+      `;
+    }
+
+    function renderTransactionList(containerId, transactions) {
+      const container = document.getElementById(containerId);
+      if (!transactions || transactions.length === 0) {
+        container.innerHTML = `<div class="tx-empty">No transactions found.</div>`;
+        return;
+      }
+      container.innerHTML = transactions.map(renderTransactionRow).join("");
     }
 
     async function savePayee() {
@@ -747,28 +923,58 @@
       const nickname = document.getElementById("payeeNickname").value;
       if (!phno) return showStatus("Please enter a payee phone number.", "error");
 
-      const data = await apiCall(`${BASE_URL}/payees`, jsonRequest("POST", { payeePhno: Number(phno), nickname: nickname || null }));
-      showStatus("Payee saved successfully. Result opened in new tab.", "success");
-      openResultTab("Save Payee", data);
-      refreshPayeeSelect();
+      await apiCall(`${BASE_URL}/payees`, jsonRequest("POST", { payeePhno: Number(phno), nickname: nickname || null }));
+      document.getElementById("payeePhno").value = "";
+      document.getElementById("payeeNickname").value = "";
+      await Promise.all([refreshPayeeSelect(), getPayees()]);
+      showStatus("Payee saved successfully.", "success");
     }
 
+    // Deliberately silent (not requireLogin()) when logged out: this also runs on page load and after every
+    // login/logout via storeSession(), where popping an error toast before the person has done anything would
+    // be noise, not feedback.
     async function getPayees() {
-      if (!requireLogin()) return;
+      if (!sessionToken) {
+        document.getElementById("payeeList").innerHTML = "";
+        return;
+      }
 
       const data = await apiCall(`${BASE_URL}/payees`);
-      showStatus("Payees loaded successfully. Result opened in new tab.", "success");
-      openResultTab("My Payees", data);
+      renderPayeeList(data);
     }
 
-    async function deletePayee() {
-      if (!requireLogin()) return;
-      const phno = document.getElementById("deletePayeePhno").value;
-      if (!phno) return showStatus("Please enter a payee phone number.", "error");
+    function payeeLabel(payee) {
+      return payee.nickname ? `${payee.nickname} (${payee.payeePhno})` : String(payee.payeePhno);
+    }
+
+    function renderPayeeList(payees) {
+      const container = document.getElementById("payeeList");
+      if (!payees || payees.length === 0) {
+        container.innerHTML = `<div class="payee-empty">No payees saved yet.</div>`;
+        return;
+      }
+      container.innerHTML = payees.map(payee => `
+        <div class="payee-row">
+          <span class="payee-name">${escapeHtml(payeeLabel(payee))}</span>
+          <button type="button" class="payee-delete" data-phno="${payee.payeePhno}" data-label="${escapeHtml(payeeLabel(payee))}">Delete</button>
+        </div>
+      `).join("");
+    }
+
+    // Event delegation on the (persistent) list container - row buttons are re-created on every render,
+    // so a listener attached directly to them would need re-wiring after each renderPayeeList() call.
+    document.getElementById("payeeList").addEventListener("click", (event) => {
+      const button = event.target.closest(".payee-delete");
+      if (!button) return;
+      deletePayeeByPhno(Number(button.dataset.phno), button.dataset.label);
+    });
+
+    async function deletePayeeByPhno(phno, label) {
+      if (!confirm(`Remove ${label} from your payees?`)) return;
 
       await apiCall(`${BASE_URL}/payees/${encodeURIComponent(phno)}`, { method: "DELETE" });
+      await Promise.all([refreshPayeeSelect(), getPayees()]);
       showStatus("Payee deleted successfully.", "success");
-      refreshPayeeSelect();
     }
 
     async function getTransactionById() {
@@ -777,12 +983,12 @@
       if (!transactionId) return showStatus("Please enter transaction ID.", "error");
 
       const data = await apiCall(`${BASE_URL}/transactions/${encodeURIComponent(transactionId)}`);
-      showStatus("Transaction loaded successfully. Result opened in new tab.", "success");
-      openResultTab("Transaction By ID", data);
+      renderTransactionList("transactionByIdResult", [data]);
     }
 
     updateSessionBar();
     refreshPayeeSelect();
+    getPayees();
 </script>
 
 </body>

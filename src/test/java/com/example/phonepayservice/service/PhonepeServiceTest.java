@@ -654,14 +654,14 @@ class PhonepeServiceTest {
     // (TransactionRepository.findVisibleTo) and is tested there; this service just wires page/size into a Pageable.
     @Test
     void transactionsOf_asksTheRepositoryForANewestFirstPage() {
-        when(transactions.findVisibleTo(eq(RECEIVER), any(), any(), any())).thenReturn(new PageImpl<>(List.of(
+        when(transactions.findVisibleTo(eq(RECEIVER), any(), any(), any(), any(), any())).thenReturn(new PageImpl<>(List.of(
                 row(1, PAYER, RECEIVER, TransactionStatus.COMPLETED))));
 
-        PageResponse<Transaction> result = service.transactionsOf(RECEIVER, 0, 20, null, null);
+        PageResponse<Transaction> result = service.transactionsOf(RECEIVER, 0, 20, null, null, null, null);
 
         assertEquals(List.of(1L), result.content().stream().map(Transaction::getTransactionId).toList());
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
-        verify(transactions).findVisibleTo(eq(RECEIVER), any(), any(), pageable.capture());
+        verify(transactions).findVisibleTo(eq(RECEIVER), any(), any(), any(), any(), pageable.capture());
         assertEquals(0, pageable.getValue().getPageNumber());
         assertEquals(20, pageable.getValue().getPageSize());
         assertEquals(Sort.by("id").descending(), pageable.getValue().getSort());
@@ -671,11 +671,20 @@ class PhonepeServiceTest {
     void transactionsOf_passesFromAndToThrough() {
         Instant from = Instant.parse("2026-01-01T00:00:00Z");
         Instant to = Instant.parse("2026-01-31T23:59:59Z");
-        when(transactions.findVisibleTo(eq(RECEIVER), eq(from), eq(to), any())).thenReturn(new PageImpl<>(List.of()));
+        when(transactions.findVisibleTo(eq(RECEIVER), eq(from), eq(to), any(), any(), any())).thenReturn(new PageImpl<>(List.of()));
 
-        service.transactionsOf(RECEIVER, 0, 20, from, to);
+        service.transactionsOf(RECEIVER, 0, 20, from, to, null, null);
 
-        verify(transactions).findVisibleTo(eq(RECEIVER), eq(from), eq(to), any());
+        verify(transactions).findVisibleTo(eq(RECEIVER), eq(from), eq(to), any(), any(), any());
+    }
+
+    @Test
+    void transactionsOf_passesCounterpartyAndNoteContainsThrough() {
+        when(transactions.findVisibleTo(eq(RECEIVER), any(), any(), eq(PAYER), eq("rent"), any())).thenReturn(new PageImpl<>(List.of()));
+
+        service.transactionsOf(RECEIVER, 0, 20, null, null, PAYER, "rent");
+
+        verify(transactions).findVisibleTo(eq(RECEIVER), any(), any(), eq(PAYER), eq("rent"), any());
     }
 
     @Test
@@ -683,22 +692,22 @@ class PhonepeServiceTest {
         Instant from = Instant.parse("2026-01-31T23:59:59Z");
         Instant to = Instant.parse("2026-01-01T00:00:00Z");
 
-        assertThrows(InvalidRequestException.class, () -> service.transactionsOf(RECEIVER, 0, 20, from, to));
+        assertThrows(InvalidRequestException.class, () -> service.transactionsOf(RECEIVER, 0, 20, from, to, null, null));
 
         verifyNoInteractions(transactions);
     }
 
     @Test
     void transactionsOf_negativePage_throwsInvalidRequest() {
-        assertThrows(InvalidRequestException.class, () -> service.transactionsOf(RECEIVER, -1, 20, null, null));
+        assertThrows(InvalidRequestException.class, () -> service.transactionsOf(RECEIVER, -1, 20, null, null, null, null));
 
         verifyNoInteractions(transactions);
     }
 
     @Test
     void transactionsOf_sizeOutOfRange_throwsInvalidRequest() {
-        assertThrows(InvalidRequestException.class, () -> service.transactionsOf(RECEIVER, 0, 0, null, null));
-        assertThrows(InvalidRequestException.class, () -> service.transactionsOf(RECEIVER, 0, PhonepeService.MAX_PAGE_SIZE + 1, null, null));
+        assertThrows(InvalidRequestException.class, () -> service.transactionsOf(RECEIVER, 0, 0, null, null, null, null));
+        assertThrows(InvalidRequestException.class, () -> service.transactionsOf(RECEIVER, 0, PhonepeService.MAX_PAGE_SIZE + 1, null, null, null, null));
 
         verifyNoInteractions(transactions);
     }
