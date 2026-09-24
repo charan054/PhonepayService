@@ -711,18 +711,19 @@ class PhonepeControllerTest {
 
     @Test
     void savePayee_returnsTheSavedPayee() throws Exception {
-        when(payeeService.save(CALLER, RECEIVER, "Ravi")).thenReturn(new PayeeResponse(RECEIVER, "Ravi"));
+        when(payeeService.save(CALLER, RECEIVER, "Ravi")).thenReturn(new PayeeResponse(RECEIVER, "Ravi", "Ravi Kumar"));
 
         mockMvc.perform(asCaller(post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"payeePhno\":9123456789,\"nickname\":\"Ravi\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.payeePhno").value(RECEIVER))
-                .andExpect(jsonPath("$.nickname").value("Ravi"));
+                .andExpect(jsonPath("$.nickname").value("Ravi"))
+                .andExpect(jsonPath("$.payeeName").value("Ravi Kumar"));
     }
 
     @Test
     void savePayee_noNickname_isAllowed() throws Exception {
-        when(payeeService.save(CALLER, RECEIVER, null)).thenReturn(new PayeeResponse(RECEIVER, null));
+        when(payeeService.save(CALLER, RECEIVER, null)).thenReturn(new PayeeResponse(RECEIVER, null, "Ravi Kumar"));
 
         mockMvc.perform(asCaller(post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"payeePhno\":9123456789}"))
@@ -773,7 +774,7 @@ class PhonepeControllerTest {
 
     @Test
     void payees_returnsTheCallersSavedPayees() throws Exception {
-        when(payeeService.listPayees(CALLER)).thenReturn(List.of(new PayeeResponse(RECEIVER, "Ravi")));
+        when(payeeService.listPayees(CALLER)).thenReturn(List.of(new PayeeResponse(RECEIVER, "Ravi", null)));
 
         mockMvc.perform(asCaller(get("/phonepe/payees")))
                 .andExpect(status().isOk())
