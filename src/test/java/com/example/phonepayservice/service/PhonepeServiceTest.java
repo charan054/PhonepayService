@@ -401,6 +401,23 @@ class PhonepeServiceTest {
         assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.FAILED), writes);
     }
 
+    // A retry that fires immediately, back-to-back, hits an already-struggling bank at the worst possible
+    // moment. There must be a real pause between attempts - checked as a lower bound on wall-clock time (never
+    // an upper bound, which would be flaky on a slow machine) rather than by mocking Thread.sleep.
+    @Test
+    void sendMoney_conflictRetries_pauseBetweenAttempts() {
+        when(transactions.findMaxTransactionId()).thenReturn(null);
+        doThrow(new BankConflictException("busy")).when(bank).transfer(eq(PAYER), eq(RECEIVER), any(), any());
+
+        long start = System.nanoTime();
+        assertThrows(TransferFailedException.class, () -> service.sendMoney(PAYER, RECEIVER, AMOUNT, null, null));
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+
+        // 2 backoffs happen before the 3rd (final) attempt gives up; each is at least 120ms (see
+        // PhonepeService.BACKOFF_BASE_MS), so well under half of that floor as a generous lower bound.
+        assertTrue(elapsedMs >= 200, "expected a real pause between retries, only took " + elapsedMs + "ms");
+    }
+
     // ============ bookkeeping ============
 
     @Test
