@@ -4,6 +4,7 @@ import com.example.phonepayservice.configuration.ClockConfig;
 import com.example.phonepayservice.configuration.WebConfig;
 import com.example.phonepayservice.dto.BalanceResponse;
 import com.example.phonepayservice.dto.LoginResponse;
+import com.example.phonepayservice.dto.MonthlySummaryResponse;
 import com.example.phonepayservice.dto.PageResponse;
 import com.example.phonepayservice.dto.PayeeResponse;
 import com.example.phonepayservice.dto.ProfileResponse;
@@ -45,6 +46,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -115,7 +117,8 @@ class PhonepeControllerTest {
                 post("/phonepe/sendmoney").contentType(MediaType.APPLICATION_JSON).content("{\"receiverPhno\":9123456789,\"amount\":10}"),
                 post("/phonepe/makepayment").contentType(MediaType.APPLICATION_JSON).content("{\"amount\":10}"),
                 get("/phonepe/transactions"),
-                get("/phonepe/transactions/100000"));
+                get("/phonepe/transactions/100000"),
+                get("/phonepe/summary"));
     }
 
     @Test
@@ -705,6 +708,44 @@ class PhonepeControllerTest {
     void transaction_nonNumericId_returns400() throws Exception {
         mockMvc.perform(asCaller(get("/phonepe/transactions/abc")))
                 .andExpect(status().isBadRequest());
+    }
+
+    // ============ GET /phonepe/summary ============
+
+    @Test
+    void summary_defaultsToNoMonthParameter_whenNoneGiven() throws Exception {
+        when(phonepeService.monthlySummary(eq(CALLER), isNull())).thenReturn(
+                new MonthlySummaryResponse("2026-09", new BigDecimal("100.00"), 2, new BigDecimal("50.00"), 1));
+
+        mockMvc.perform(asCaller(get("/phonepe/summary")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.month").value("2026-09"))
+                .andExpect(jsonPath("$.totalSent").value(100.00))
+                .andExpect(jsonPath("$.sentCount").value(2))
+                .andExpect(jsonPath("$.totalReceived").value(50.00))
+                .andExpect(jsonPath("$.receivedCount").value(1));
+
+        verify(phonepeService).monthlySummary(CALLER, null);
+    }
+
+    @Test
+    void summary_passesAnExplicitMonthThrough() throws Exception {
+        when(phonepeService.monthlySummary(CALLER, "2026-01")).thenReturn(
+                new MonthlySummaryResponse("2026-01", BigDecimal.ZERO, 0, BigDecimal.ZERO, 0));
+
+        mockMvc.perform(asCaller(get("/phonepe/summary")).param("month", "2026-01"))
+                .andExpect(status().isOk());
+
+        verify(phonepeService).monthlySummary(CALLER, "2026-01");
+    }
+
+    @Test
+    void summary_invalidMonth_returns400() throws Exception {
+        when(phonepeService.monthlySummary(CALLER, "not-a-month")).thenThrow(new InvalidRequestException("month must be in YYYY-MM format."));
+
+        mockMvc.perform(asCaller(get("/phonepe/summary")).param("month", "not-a-month"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("month must be in YYYY-MM format."));
     }
 
     // ============ POST /phonepe/payees ============
