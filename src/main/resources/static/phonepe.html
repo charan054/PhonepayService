@@ -589,7 +589,7 @@
       return { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
     }
 
-    async function apiCall(url, options = {}) {
+    async function apiCall(url, options = {}, { showErrorTab = true } = {}) {
       try {
         showStatus("Processing request...", "");
         const headers = { ...(options.headers || {}) };
@@ -609,7 +609,7 @@
         return JSON.parse(text);
       } catch (error) {
         showStatus("Request failed: " + error.message, "error");
-        openResultTab("Request Failed", { error: error.message });
+        if (showErrorTab) openResultTab("Request Failed", { error: error.message });
         throw error;
       }
     }
@@ -771,12 +771,15 @@
       const pin = document.getElementById("loginPin").value;
       if (!phno || !pin) return showStatus("Please enter phone number and PIN.", "error");
 
-      const data = await apiCall(`${BASE_URL}/login`, jsonRequest("POST", { phno: Number(phno), pin }));
-      storeSession(data.token, data.name);
-      document.getElementById("loginPin").value = "";
-      showStatus(`Logged in as ${data.name}. Result opened in new tab.`, "success");
-      // the token itself is never shown or printed
-      openResultTab("Login User", { message: "Login completed successfully", name: data.name, phoneNumber: data.phno, sessionExpiresAt: data.expiresAt });
+      try {
+        const data = await apiCall(`${BASE_URL}/login`, jsonRequest("POST", { phno: Number(phno), pin }), { showErrorTab: false });
+        storeSession(data.token, data.name);
+        document.getElementById("loginPin").value = "";
+        // the token itself is never shown or printed
+        showStatus(`Logged in as ${data.name}.`, "success");
+      } catch (error) {
+        // apiCall already showed the reason in the toast; stay on the login page, nothing else to do
+      }
     }
 
     async function logoutUser() {
