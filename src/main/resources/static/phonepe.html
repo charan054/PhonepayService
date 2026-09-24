@@ -976,11 +976,11 @@
       const nickname = document.getElementById("payeeNickname").value;
       if (!phno) return showStatus("Please enter a payee phone number.", "error");
 
-      await apiCall(`${BASE_URL}/payees`, jsonRequest("POST", { payeePhno: Number(phno), nickname: nickname || null }));
+      const data = await apiCall(`${BASE_URL}/payees`, jsonRequest("POST", { payeePhno: Number(phno), nickname: nickname || null }));
       document.getElementById("payeePhno").value = "";
       document.getElementById("payeeNickname").value = "";
       await Promise.all([refreshPayeeSelect(), getPayees()]);
-      showStatus("Payee saved successfully.", "success");
+      showStatus(data.payeeName ? `Saved: ${data.payeeName}` : "Payee saved successfully.", "success");
     }
 
     // Deliberately silent (not requireLogin()) when logged out: this also runs on page load and after every
