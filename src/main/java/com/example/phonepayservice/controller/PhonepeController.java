@@ -2,8 +2,10 @@ package com.example.phonepayservice.controller;
 
 import com.example.phonepayservice.configuration.AuthInterceptor;
 import com.example.phonepayservice.dto.BalanceResponse;
+import com.example.phonepayservice.dto.CreateMoneyRequestRequest;
 import com.example.phonepayservice.dto.LoginRequest;
 import com.example.phonepayservice.dto.LoginResponse;
+import com.example.phonepayservice.dto.MoneyRequestResponse;
 import com.example.phonepayservice.dto.PageResponse;
 import com.example.phonepayservice.dto.PayeeResponse;
 import com.example.phonepayservice.dto.PaymentRequest;
@@ -11,6 +13,7 @@ import com.example.phonepayservice.dto.ProfileResponse;
 import com.example.phonepayservice.dto.SavePayeeRequest;
 import com.example.phonepayservice.dto.SendMoneyRequest;
 import com.example.phonepayservice.dto.TransactionResponse;
+import com.example.phonepayservice.service.MoneyRequestService;
 import com.example.phonepayservice.service.PayeeService;
 import com.example.phonepayservice.service.PhonepeService;
 import jakarta.validation.Valid;
@@ -39,10 +42,12 @@ import java.util.List;
 public class PhonepeController {
     private final PhonepeService phonepeService;
     private final PayeeService payeeService;
+    private final MoneyRequestService moneyRequestService;
 
-    public PhonepeController(PhonepeService phonepeService, PayeeService payeeService) {
+    public PhonepeController(PhonepeService phonepeService, PayeeService payeeService, MoneyRequestService moneyRequestService) {
         this.phonepeService = phonepeService;
         this.payeeService = payeeService;
+        this.moneyRequestService = moneyRequestService;
     }
 
     @PostMapping("/login")
@@ -113,5 +118,31 @@ public class PhonepeController {
     public void deletePayee(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
                             @PathVariable long payeePhno) {
         payeeService.delete(caller, payeePhno);
+    }
+
+    // ---------- money requests ----------
+
+    @PostMapping("/requests")
+    public MoneyRequestResponse createRequest(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
+                                              @Valid @RequestBody CreateMoneyRequestRequest request) {
+        return moneyRequestService.create(caller, request.payerPhno(), request.amount(), request.note());
+    }
+
+    // Everything the caller is involved in, either as the one asking or the one being asked.
+    @GetMapping("/requests")
+    public List<MoneyRequestResponse> requests(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller) {
+        return moneyRequestService.listFor(caller);
+    }
+
+    @PostMapping("/requests/{requestId}/approve")
+    public MoneyRequestResponse approveRequest(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
+                                               @PathVariable long requestId) {
+        return moneyRequestService.approve(caller, requestId);
+    }
+
+    @PostMapping("/requests/{requestId}/decline")
+    public MoneyRequestResponse declineRequest(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
+                                               @PathVariable long requestId) {
+        return moneyRequestService.decline(caller, requestId);
     }
 }

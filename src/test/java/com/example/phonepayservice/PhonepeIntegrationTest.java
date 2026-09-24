@@ -829,6 +829,118 @@ class PhonepeIntegrationTest {
         assertEquals(List.of(), bankCalls(), "an unauthenticated caller must never make this service call the bank");
     }
 
+    // ============ money requests ============
+
+    private MockHttpServletRequestBuilder createRequest(String token, long payerPhno, String amount) {
+        return as(token, post("/phonepe/requests")).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"payerPhno\":" + payerPhno + ",\"amount\":" + amount + ",\"note\":\"rent\"}");
+    }
+
+    @Test
+    void moneyRequest_create_thenApprove_actuallyMovesTheMoney() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);   // the requester
+        bankHasUser(RAVI, "RAVI SHARMA", 2000.0);   // the payer
+        transferSucceeds();
+        String ashaToken = login(ASHA);
+        String raviToken = login(RAVI);
+
+        String body = mockMvc.perform(createRequest(ashaToken, RAVI, "250"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(jsonPath("$.direction").value("OUTGOING"))
+                .andReturn().getResponse().getContentAsString();
+        long requestId = ((Number) JsonPath.read(body, "$.id")).longValue();
+        bank.resetRequests();
+
+        mockMvc.perform(as(raviToken, post("/phonepe/requests/" + requestId + "/approve")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("APPROVED"))
+                .andExpect(jsonPath("$.resultingTransactionId").exists());
+
+        assertEquals(List.of(TRANSFER), bankCalls(), "approving must actually call the bank's transfer");
+        String transferBody = transferRequestBodies().get(0);
+        assertEquals(RAVI, ((Number) JsonPath.read(transferBody, "$.payerPhno")).longValue(), transferBody);
+        assertEquals(ASHA, ((Number) JsonPath.read(transferBody, "$.receiverPhno")).longValue(), transferBody);
+    }
+
+    @Test
+    void moneyRequest_decline_movesNoMoney() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        bankHasUser(RAVI, "RAVI SHARMA", 2000.0);
+        String ashaToken = login(ASHA);
+        String raviToken = login(RAVI);
+        String body = mockMvc.perform(createRequest(ashaToken, RAVI, "250"))
+                .andReturn().getResponse().getContentAsString();
+        long requestId = ((Number) JsonPath.read(body, "$.id")).longValue();
+        bank.resetRequests();
+
+        mockMvc.perform(as(raviToken, post("/phonepe/requests/" + requestId + "/decline")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("DECLINED"));
+
+        assertEquals(List.of(), bankCalls(), "declining must never touch the bank");
+    }
+
+    @Test
+    void moneyRequest_toAnUnknownNumber_isRejected() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        String token = login(ASHA);
+
+        mockMvc.perform(createRequest(token, RAVI, "250"))
+                .andExpect(status().isNotFound())
+                .andExpect(content().string("User not found"));
+    }
+
+    // Only the payer decides; the requester asking a second time (or anyone else) must not be able to approve
+    // their own request.
+    @Test
+    void moneyRequest_theRequesterCannotApproveTheirOwnRequest() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        bankHasUser(RAVI, "RAVI SHARMA", 2000.0);
+        String ashaToken = login(ASHA);
+        String body = mockMvc.perform(createRequest(ashaToken, RAVI, "250"))
+                .andReturn().getResponse().getContentAsString();
+        long requestId = ((Number) JsonPath.read(body, "$.id")).longValue();
+
+        mockMvc.perform(as(ashaToken, post("/phonepe/requests/" + requestId + "/approve")))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void moneyRequest_approveTwice_secondTimeIsRejected_andMoneyMovesOnlyOnce() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        bankHasUser(RAVI, "RAVI SHARMA", 2000.0);
+        transferSucceeds();
+        String ashaToken = login(ASHA);
+        String raviToken = login(RAVI);
+        String body = mockMvc.perform(createRequest(ashaToken, RAVI, "250"))
+                .andReturn().getResponse().getContentAsString();
+        long requestId = ((Number) JsonPath.read(body, "$.id")).longValue();
+
+        mockMvc.perform(as(raviToken, post("/phonepe/requests/" + requestId + "/approve"))).andExpect(status().isOk());
+        bank.resetRequests();
+
+        mockMvc.perform(as(raviToken, post("/phonepe/requests/" + requestId + "/approve")))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("This request has already been resolved"));
+
+        assertEquals(List.of(), bankCalls(), "a second approve() on an already-resolved request must never touch the bank");
+    }
+
+    @Test
+    void moneyRequests_listedForBothSides_withTheirOwnDirection() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        bankHasUser(RAVI, "RAVI SHARMA", 2000.0);
+        String ashaToken = login(ASHA);
+        String raviToken = login(RAVI);
+        mockMvc.perform(createRequest(ashaToken, RAVI, "250")).andExpect(status().isOk());
+
+        mockMvc.perform(as(ashaToken, get("/phonepe/requests")))
+                .andExpect(jsonPath("$[0].direction").value("OUTGOING"));
+        mockMvc.perform(as(raviToken, get("/phonepe/requests")))
+                .andExpect(jsonPath("$[0].direction").value("INCOMING"));
+    }
+
     // ============ many payments at the same moment ============
 
     @Test

@@ -377,6 +377,23 @@
           font-style:italic;
         }
 
+        .tx-actions{
+          display:flex;
+          gap:8px;
+          margin-top:8px;
+        }
+
+        .tx-actions button{
+          width:auto;
+          flex:1;
+          padding:8px 11px;
+          font-size:13px;
+          box-shadow:none;
+        }
+
+        .tx-actions .approve{background:var(--success)}
+        .tx-actions .decline{background:var(--danger)}
+
         .tx-empty{
           color:var(--muted);
           font-size:14px;
@@ -478,6 +495,30 @@
 
         <div class="card">
             <div class="card-title">
+                <div class="icon">🙏</div>
+                <h2>Request Money</h2>
+                <span class="method">POST</span>
+            </div>
+            <p>Ask someone else to pay you. They approve or decline it from their own dashboard.</p>
+            <input type="number" id="requestPhno" placeholder="Ask this phone number">
+            <input type="number" id="requestAmount" placeholder="Amount" min="0.01" step="0.01">
+            <input type="text" id="requestNote" placeholder="Note (optional, e.g. rent)" maxlength="140">
+            <button class="green" onclick="createMoneyRequest()">Request Money</button>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <div class="icon">📥</div>
+                <h2>Money Requests</h2>
+                <span class="method">GET</span>
+            </div>
+            <p>Requests you've sent and requests waiting on you. Approving one sends the money immediately.</p>
+            <button type="button" onclick="getMoneyRequests()">Refresh Requests</button>
+            <div id="moneyRequestList" class="tx-list"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
                 <div class="icon">📄</div>
                 <h2>My Transactions</h2>
                 <span class="method">GET</span>
@@ -565,6 +606,7 @@
       updateSessionBar();
       refreshPayeeSelect();
       getPayees();
+      getMoneyRequests();
     }
 
     // Single source of truth for which screen is showing: logged out sees only the login card, logged in sees
@@ -848,6 +890,99 @@
       openResultTab("Make Payment", data);
     }
 
+    async function createMoneyRequest() {
+      if (!requireLogin()) return;
+      const phno = document.getElementById("requestPhno").value;
+      const amount = document.getElementById("requestAmount").value;
+      const note = document.getElementById("requestNote").value;
+      if (!phno || !amount) return showStatus("Please enter a phone number and amount.", "error");
+
+      await apiCall(`${BASE_URL}/requests`, jsonRequest("POST", { payerPhno: Number(phno), amount: Number(amount), note: note || null }));
+      document.getElementById("requestPhno").value = "";
+      document.getElementById("requestAmount").value = "";
+      document.getElementById("requestNote").value = "";
+      await getMoneyRequests();
+      showStatus("Money request sent.", "success");
+    }
+
+    // Deliberately silent when logged out, same reason as getPayees(): this also runs on page load and after
+    // every login/logout.
+    async function getMoneyRequests() {
+      if (!sessionToken) {
+        document.getElementById("moneyRequestList").innerHTML = "";
+        return;
+      }
+
+      const data = await apiCall(`${BASE_URL}/requests`);
+      renderMoneyRequestList(data);
+    }
+
+    function renderMoneyRequestList(list) {
+      const container = document.getElementById("moneyRequestList");
+      if (!list || list.length === 0) {
+        container.innerHTML = `<div class="tx-empty">No money requests.</div>`;
+        return;
+      }
+      container.innerHTML = list.map(renderMoneyRequestRow).join("");
+    }
+
+    // OUTGOING (you asked someone) is tinted like a credit since approving it puts money in your account;
+    // INCOMING (someone asked you) is tinted like a debit since approving it takes money out of yours. Only a
+    // PENDING request where you are the payer gets Approve/Decline buttons - the requester has nothing to
+    // action on their own outgoing request but wait.
+    function renderMoneyRequestRow(r) {
+      const isOutgoing = r.direction === "OUTGOING";
+      const counterparty = isOutgoing ? r.payerPhno : r.requesterPhno;
+      const counterpartyLabel = isOutgoing ? `Asked ${counterparty}` : `${counterparty} asked you`;
+      const statusClass = "status-" + String(r.status).toLowerCase();
+      const actions = (!isOutgoing && r.status === "PENDING")
+          ? `<div class="tx-actions">
+               <button type="button" class="approve" data-request-id="${r.id}" data-action="approve">Approve</button>
+               <button type="button" class="decline" data-request-id="${r.id}" data-action="decline">Decline</button>
+             </div>`
+          : "";
+      return `
+        <div class="tx-row">
+          <div class="tx-row-top">
+            <span class="tx-amount ${isOutgoing ? "credit" : "debit"}">${escapeHtml(String(r.amount))}</span>
+            <span class="status-badge ${statusClass}">${escapeHtml(r.status)}</span>
+          </div>
+          <div class="tx-row-meta">
+            <span>${escapeHtml(counterpartyLabel)}</span>
+            <span>${escapeHtml(formatDate(r.createdAt))}</span>
+          </div>
+          ${r.note ? `<div class="tx-note">${escapeHtml(r.note)}</div>` : ""}
+          ${actions}
+        </div>
+      `;
+    }
+
+    // Event delegation, same reasoning as the payee list: rows (and their buttons) are re-created on every
+    // render, so a listener on the persistent container avoids re-wiring after each renderMoneyRequestList().
+    document.getElementById("moneyRequestList").addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-request-id]");
+      if (!button) return;
+      const id = Number(button.dataset.requestId);
+      if (button.dataset.action === "approve") approveMoneyRequest(id);
+      else declineMoneyRequest(id);
+    });
+
+    async function approveMoneyRequest(id) {
+      if (!confirm("Approve this request? This sends the money immediately.")) return;
+
+      await apiCall(`${BASE_URL}/requests/${id}/approve`, { method: "POST" });
+      await getMoneyRequests();
+      showStatus("Request approved. Money sent.", "success");
+    }
+
+    async function declineMoneyRequest(id) {
+      if (!confirm("Decline this request?")) return;
+
+      await apiCall(`${BASE_URL}/requests/${id}/decline`, { method: "POST" });
+      await getMoneyRequests();
+      showStatus("Request declined.", "success");
+    }
+
     let transactionsPage = 0;
 
     async function getMyTransactions() {
@@ -995,6 +1130,7 @@
     updateSessionBar();
     refreshPayeeSelect();
     getPayees();
+    getMoneyRequests();
 </script>
 
 </body>
