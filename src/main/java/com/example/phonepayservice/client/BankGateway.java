@@ -82,11 +82,11 @@ public class BankGateway {
     }
 
     public void withdraw(long phno, BigDecimal amount) {
-        moveMoney(() -> bank.withdrawByphno(serviceKey, phno, amount.doubleValue()));
+        moveMoney(() -> bank.withdrawByphno(serviceKey, phno, amount));
     }
 
     public void deposit(long phno, BigDecimal amount) {
-        moveMoney(() -> bank.depositByphno(serviceKey, phno, amount.doubleValue()));
+        moveMoney(() -> bank.depositByphno(serviceKey, phno, amount));
     }
 
     // Idempotent by construction (see BankTransferRequest): retrying with the same idempotencyKey after a

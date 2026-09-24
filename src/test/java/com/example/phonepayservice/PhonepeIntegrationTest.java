@@ -141,7 +141,7 @@ class PhonepeIntegrationTest {
                 .willReturn(aResponse().withStatus(400).withHeader("Content-Type", "text/plain").withBody(reason)));
     }
 
-    /** Every request the fake bank has received, oldest first, like "PUT /bank/withdrawByphno?phno=1&balance=250.0". */
+    /** Every request the fake bank has received, oldest first, like "PUT /bank/withdrawByphno?phno=1&balance=250.00". */
     private List<String> bankCalls() {
         List<ServeEvent> events = new ArrayList<>(bank.getAllServeEvents());   // newest first
         Collections.reverse(events);
@@ -480,7 +480,7 @@ class PhonepeIntegrationTest {
                 .andExpect(jsonPath("$.receiverPhno").doesNotExist())
                 .andExpect(jsonPath("$.status").value("COMPLETED"));
 
-        assertEquals(List.of(withdraw(ASHA, "99.5")), bankCalls());
+        assertEquals(List.of(withdraw(ASHA, "99.50")), bankCalls());
     }
 
     @Test
@@ -522,7 +522,7 @@ class PhonepeIntegrationTest {
                 .andExpect(status().isBadGateway())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("could not confirm")));
 
-        assertEquals(List.of(withdraw(ASHA, "250.0")), bankCalls(), "one withdrawal attempt, no re-send");
+        assertEquals(List.of(withdraw(ASHA, "250.00")), bankCalls(), "one withdrawal attempt, no re-send");
         assertEquals(TransactionStatus.NEEDS_RECONCILIATION, storedTransactions().get(0).getStatus());
     }
 
