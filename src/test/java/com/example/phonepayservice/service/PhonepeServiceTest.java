@@ -93,7 +93,7 @@ class PhonepeServiceTest {
         }).when(transactions).save(any(Transaction.class));
     }
 
-    private BankUser bankUser(String name, double balance) {
+    private BankUser bankUser(String name, BigDecimal balance) {
         BankUser u = new BankUser();
         u.setName(name);
         u.setAcno(1000000000L);
@@ -172,7 +172,7 @@ class PhonepeServiceTest {
 
     @Test
     void profile_showsTheBanksNameAccountAndBalance() {
-        when(bank.findUser(PAYER)).thenReturn(bankUser("KUMAR CHARAN", 1234.5));
+        when(bank.findUser(PAYER)).thenReturn(bankUser("KUMAR CHARAN", new BigDecimal("1234.5")));
 
         ProfileResponse profile = service.profile(PAYER);
 
@@ -184,7 +184,7 @@ class PhonepeServiceTest {
 
     @Test
     void balance_isReportedWithTwoDecimals() {
-        when(bank.findUser(PAYER)).thenReturn(bankUser("X", 0.1 + 0.2));   // floating point gives 0.30000000000000004
+        when(bank.findUser(PAYER)).thenReturn(bankUser("X", new BigDecimal("0.3")));
 
         BalanceResponse balance = service.balance(PAYER);
 
