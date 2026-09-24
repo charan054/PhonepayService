@@ -26,7 +26,12 @@ public class Transaction {
     // null for payments that have no receiver. The column keeps its original (misspelled) name so existing data still lines up.
     @Column(name = "recieverno")
     private Long receiverPhno;
+    // Every write path (record()/settle()/unresolved() in PhonepeService) always sets this before the row is
+    // ever visible to a reader; enforced at the database too so a future write path can't leave it unset and
+    // silently be treated as COMPLETED by TransactionResponse.from()/PhonepeService.visibleTo()'s legacy-row
+    // fallback for a row that was never actually legacy.
     @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
     private TransactionStatus status;
     private String failureReason;
     private Instant createdAt;
