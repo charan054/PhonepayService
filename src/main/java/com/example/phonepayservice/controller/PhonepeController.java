@@ -3,19 +3,23 @@ package com.example.phonepayservice.controller;
 import com.example.phonepayservice.configuration.AuthInterceptor;
 import com.example.phonepayservice.dto.BalanceResponse;
 import com.example.phonepayservice.dto.CreateMoneyRequestRequest;
+import com.example.phonepayservice.dto.CreateRecurringPaymentRequest;
 import com.example.phonepayservice.dto.LoginRequest;
 import com.example.phonepayservice.dto.LoginResponse;
 import com.example.phonepayservice.dto.MoneyRequestResponse;
+import com.example.phonepayservice.dto.MonthlySummaryResponse;
 import com.example.phonepayservice.dto.PageResponse;
 import com.example.phonepayservice.dto.PayeeResponse;
 import com.example.phonepayservice.dto.PaymentRequest;
 import com.example.phonepayservice.dto.ProfileResponse;
+import com.example.phonepayservice.dto.RecurringPaymentResponse;
 import com.example.phonepayservice.dto.SavePayeeRequest;
 import com.example.phonepayservice.dto.SendMoneyRequest;
 import com.example.phonepayservice.dto.TransactionResponse;
 import com.example.phonepayservice.service.MoneyRequestService;
 import com.example.phonepayservice.service.PayeeService;
 import com.example.phonepayservice.service.PhonepeService;
+import com.example.phonepayservice.service.RecurringPaymentService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -43,11 +47,14 @@ public class PhonepeController {
     private final PhonepeService phonepeService;
     private final PayeeService payeeService;
     private final MoneyRequestService moneyRequestService;
+    private final RecurringPaymentService recurringPaymentService;
 
-    public PhonepeController(PhonepeService phonepeService, PayeeService payeeService, MoneyRequestService moneyRequestService) {
+    public PhonepeController(PhonepeService phonepeService, PayeeService payeeService,
+                             MoneyRequestService moneyRequestService, RecurringPaymentService recurringPaymentService) {
         this.phonepeService = phonepeService;
         this.payeeService = payeeService;
         this.moneyRequestService = moneyRequestService;
+        this.recurringPaymentService = recurringPaymentService;
     }
 
     @PostMapping("/login")
@@ -100,6 +107,13 @@ public class PhonepeController {
         return TransactionResponse.from(phonepeService.transaction(caller, transactionId), caller);
     }
 
+    // month is "YYYY-MM"; omitted, it defaults to the current month.
+    @GetMapping("/summary")
+    public MonthlySummaryResponse summary(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
+                                          @RequestParam(required = false) String month) {
+        return phonepeService.monthlySummary(caller, month);
+    }
+
     // ---------- saved payees ----------
 
     @PostMapping("/payees")
@@ -144,5 +158,37 @@ public class PhonepeController {
     public MoneyRequestResponse declineRequest(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
                                                @PathVariable long requestId) {
         return moneyRequestService.decline(caller, requestId);
+    }
+
+    // ---------- recurring payments ----------
+
+    @PostMapping("/recurring")
+    public RecurringPaymentResponse createRecurringPayment(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
+                                                            @Valid @RequestBody CreateRecurringPaymentRequest request) {
+        return recurringPaymentService.create(caller, request.payeePhno(), request.amount(), request.note(), request.intervalDays());
+    }
+
+    @GetMapping("/recurring")
+    public List<RecurringPaymentResponse> recurringPayments(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller) {
+        return recurringPaymentService.listFor(caller);
+    }
+
+    @PostMapping("/recurring/{id}/pause")
+    public RecurringPaymentResponse pauseRecurringPayment(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
+                                                           @PathVariable long id) {
+        return recurringPaymentService.pause(caller, id);
+    }
+
+    @PostMapping("/recurring/{id}/resume")
+    public RecurringPaymentResponse resumeRecurringPayment(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
+                                                            @PathVariable long id) {
+        return recurringPaymentService.resume(caller, id);
+    }
+
+    // Soft-cancels (the row stays, marked CANCELLED) rather than deleting, so its history stays visible in the list.
+    @DeleteMapping("/recurring/{id}")
+    public RecurringPaymentResponse cancelRecurringPayment(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
+                                                            @PathVariable long id) {
+        return recurringPaymentService.cancel(caller, id);
     }
 }
