@@ -377,6 +377,23 @@
           font-style:italic;
         }
 
+        .tx-actions{
+          display:flex;
+          gap:8px;
+          margin-top:8px;
+        }
+
+        .tx-actions button{
+          width:auto;
+          flex:1;
+          padding:8px 11px;
+          font-size:13px;
+          box-shadow:none;
+        }
+
+        .tx-actions .approve{background:var(--success)}
+        .tx-actions .decline{background:var(--danger)}
+
         .tx-empty{
           color:var(--muted);
           font-size:14px;
@@ -509,6 +526,31 @@
 
         <div class="card">
             <div class="card-title">
+                <div class="icon">🔁</div>
+                <h2>Set Up Recurring Payment</h2>
+                <span class="method">POST</span>
+            </div>
+            <p>Automatically pay the same person the same amount every so many days, until you pause or cancel it.</p>
+            <input type="number" id="recurringPhno" placeholder="Pay this phone number">
+            <input type="number" id="recurringAmount" placeholder="Amount" min="0.01" step="0.01">
+            <input type="number" id="recurringIntervalDays" placeholder="Repeat every N days (e.g. 7, 30)" min="1" max="365">
+            <input type="text" id="recurringNote" placeholder="Note (optional, e.g. rent)" maxlength="140">
+            <button class="green" onclick="createRecurringPayment()">Set Up Recurring Payment</button>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <div class="icon">🔂</div>
+                <h2>Recurring Payments</h2>
+                <span class="method">GET</span>
+            </div>
+            <p>Your standing payments. Pause, resume or cancel one any time.</p>
+            <button type="button" onclick="getRecurringPayments()">Refresh Recurring Payments</button>
+            <div id="recurringPaymentList" class="tx-list"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
                 <div class="icon">📄</div>
                 <h2>My Transactions</h2>
                 <span class="method">GET</span>
@@ -611,6 +653,7 @@
       updateSessionBar();
       refreshPayeeSelect();
       getPayees();
+      getRecurringPayments();
       renderMyQrCode();
     }
 
@@ -895,6 +938,101 @@
       openResultTab("Make Payment", data);
     }
 
+    async function createRecurringPayment() {
+      if (!requireLogin()) return;
+      const phno = document.getElementById("recurringPhno").value;
+      const amount = document.getElementById("recurringAmount").value;
+      const intervalDays = document.getElementById("recurringIntervalDays").value;
+      const note = document.getElementById("recurringNote").value;
+      if (!phno || !amount || !intervalDays) return showStatus("Please enter a phone number, amount and interval.", "error");
+
+      await apiCall(`${BASE_URL}/recurring`, jsonRequest("POST",
+          { payeePhno: Number(phno), amount: Number(amount), note: note || null, intervalDays: Number(intervalDays) }));
+      document.getElementById("recurringPhno").value = "";
+      document.getElementById("recurringAmount").value = "";
+      document.getElementById("recurringIntervalDays").value = "";
+      document.getElementById("recurringNote").value = "";
+      await getRecurringPayments();
+      showStatus("Recurring payment set up.", "success");
+    }
+
+    // Deliberately silent when logged out, same reason as getPayees(): this also runs on page load and after
+    // every login/logout.
+    async function getRecurringPayments() {
+      if (!sessionToken) {
+        document.getElementById("recurringPaymentList").innerHTML = "";
+        return;
+      }
+
+      const data = await apiCall(`${BASE_URL}/recurring`);
+      renderRecurringPaymentList(data);
+    }
+
+    function renderRecurringPaymentList(list) {
+      const container = document.getElementById("recurringPaymentList");
+      if (!list || list.length === 0) {
+        container.innerHTML = `<div class="tx-empty">No recurring payments.</div>`;
+        return;
+      }
+      container.innerHTML = list.map(renderRecurringPaymentRow).join("");
+    }
+
+    // Pause/Resume/Cancel only make sense while it's still going: ACTIVE gets Pause, PAUSED gets Resume, and
+    // both get Cancel; CANCELLED is a dead end shown for history only, with no actions.
+    function renderRecurringPaymentRow(r) {
+      const statusClass = "status-" + String(r.status).toLowerCase();
+      const actions = [];
+      if (r.status === "ACTIVE") actions.push(`<button type="button" class="decline" data-recurring-id="${r.id}" data-action="pause">Pause</button>`);
+      if (r.status === "PAUSED") actions.push(`<button type="button" class="approve" data-recurring-id="${r.id}" data-action="resume">Resume</button>`);
+      if (r.status !== "CANCELLED") actions.push(`<button type="button" class="decline" data-recurring-id="${r.id}" data-action="cancel">Cancel</button>`);
+      return `
+        <div class="tx-row">
+          <div class="tx-row-top">
+            <span class="tx-amount debit">${escapeHtml(String(r.amount))}</span>
+            <span class="status-badge ${statusClass}">${escapeHtml(r.status)}</span>
+          </div>
+          <div class="tx-row-meta">
+            <span>To ${escapeHtml(String(r.payeePhno))} every ${escapeHtml(String(r.intervalDays))} day(s)</span>
+            <span>Next: ${r.status === "ACTIVE" ? escapeHtml(formatDate(r.nextRunAt)) : "-"}</span>
+          </div>
+          ${r.note ? `<div class="tx-note">${escapeHtml(r.note)}</div>` : ""}
+          ${actions.length ? `<div class="tx-actions">${actions.join("")}</div>` : ""}
+        </div>
+      `;
+    }
+
+    // Event delegation, same reasoning as the payee and money-request lists: rows (and their buttons) are
+    // re-created on every render, so a listener on the persistent container avoids re-wiring after each render.
+    document.getElementById("recurringPaymentList").addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-recurring-id]");
+      if (!button) return;
+      const id = Number(button.dataset.recurringId);
+      const action = button.dataset.action;
+      if (action === "pause") pauseRecurringPayment(id);
+      else if (action === "resume") resumeRecurringPayment(id);
+      else cancelRecurringPayment(id);
+    });
+
+    async function pauseRecurringPayment(id) {
+      await apiCall(`${BASE_URL}/recurring/${id}/pause`, { method: "POST" });
+      await getRecurringPayments();
+      showStatus("Recurring payment paused.", "success");
+    }
+
+    async function resumeRecurringPayment(id) {
+      await apiCall(`${BASE_URL}/recurring/${id}/resume`, { method: "POST" });
+      await getRecurringPayments();
+      showStatus("Recurring payment resumed.", "success");
+    }
+
+    async function cancelRecurringPayment(id) {
+      if (!confirm("Cancel this recurring payment? This cannot be undone.")) return;
+
+      await apiCall(`${BASE_URL}/recurring/${id}`, { method: "DELETE" });
+      await getRecurringPayments();
+      showStatus("Recurring payment cancelled.", "success");
+    }
+
     let transactionsPage = 0;
 
     async function getMyTransactions() {
@@ -1070,6 +1208,7 @@
     updateSessionBar();
     refreshPayeeSelect();
     getPayees();
+    getRecurringPayments();
     renderMyQrCode();
 </script>
 
