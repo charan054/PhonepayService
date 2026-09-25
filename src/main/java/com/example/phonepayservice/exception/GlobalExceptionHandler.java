@@ -54,6 +54,11 @@ public class GlobalExceptionHandler {
         return reply(HttpStatus.NOT_FOUND, e.getMessage());
     }
 
+    @ExceptionHandler(RecurringPaymentNotFoundException.class)
+    public ResponseEntity<String> handleRecurringPaymentNotFound(RecurringPaymentNotFoundException e) {
+        return reply(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
     // bad input
     @ExceptionHandler(InvalidRequestException.class)
     public ResponseEntity<String> handleInvalidRequest(InvalidRequestException e) {
