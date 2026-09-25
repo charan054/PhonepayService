@@ -45,4 +45,9 @@ public class Transaction {
     // caller didn't supply one - such a request gets no retry protection, exactly as before this field existed.
     @Column(name = "idempotency_key")
     private String idempotencyKey;
+    // Set only on a "Refund" row: the transactionId of the Payment it reverses. The unique index means at most
+    // one refund row can ever reference a given original transaction - MySQL/InnoDB treats multiple NULLs here
+    // (every non-refund row) as distinct, so it never blocks ordinary payments from coexisting.
+    @Column(name = "refund_of_transaction_id", unique = true)
+    private Long refundOfTransactionId;
 }
