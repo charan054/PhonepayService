@@ -1,10 +1,14 @@
 package com.example.phonepayservice;
 
+import com.example.phonepayservice.entity.RecurringPayment;
+import com.example.phonepayservice.entity.RecurringPaymentStatus;
 import com.example.phonepayservice.entity.Transaction;
 import com.example.phonepayservice.entity.TransactionStatus;
 import com.example.phonepayservice.entity.UserSession;
+import com.example.phonepayservice.repository.RecurringPaymentRepository;
 import com.example.phonepayservice.repository.TransactionRepository;
 import com.example.phonepayservice.repository.UserSessionRepository;
+import com.example.phonepayservice.service.RecurringPaymentService;
 import com.github.tomakehurst.wiremock.client.WireMock;
 import com.github.tomakehurst.wiremock.http.Fault;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
@@ -93,11 +97,16 @@ class PhonepeIntegrationTest {
     private TransactionRepository transactionRepository;
     @Autowired
     private UserSessionRepository sessionRepository;
+    @Autowired
+    private RecurringPaymentRepository recurringPaymentRepository;
+    @Autowired
+    private RecurringPaymentService recurringPaymentService;
 
     @BeforeEach
     void emptyTheDatabase() {
         transactionRepository.deleteAll();
         sessionRepository.deleteAll();
+        recurringPaymentRepository.deleteAll();
     }
 
     // ============ the fake bank ============
@@ -848,6 +857,166 @@ class PhonepeIntegrationTest {
         mockMvc.perform(delete("/phonepe/payees/" + RAVI)).andExpect(status().isUnauthorized());
 
         assertEquals(List.of(), bankCalls(), "an unauthenticated caller must never make this service call the bank");
+    }
+
+    // ============ recurring payments ============
+
+    private MockHttpServletRequestBuilder createRecurring(String token, long payeePhno, String amount, int intervalDays) {
+        return as(token, post("/phonepe/recurring")).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"payeePhno\":" + payeePhno + ",\"amount\":" + amount + ",\"note\":\"rent\",\"intervalDays\":" + intervalDays + "}");
+    }
+
+    // The scheduler is called directly (not waited on for its real interval) so the test doesn't need to sleep
+    // for real time to pass; nextRunAt is forced into the past the same way a real one would eventually arrive
+    // there, one interval at a time.
+    private void forceDueNow(long id) {
+        RecurringPayment r = recurringPaymentRepository.findById(id).orElseThrow();
+        r.setNextRunAt(Instant.now().minusSeconds(1));
+        recurringPaymentRepository.save(r);
+    }
+
+    @Test
+    void recurringPayment_create_isNotDueImmediately() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        bankHasUser(RAVI, "RAVI SHARMA", 2000.0);
+        String token = login(ASHA);
+        mockMvc.perform(createRecurring(token, RAVI, "100", 7)).andExpect(status().isOk());
+        bank.resetRequests();
+
+        recurringPaymentService.runDuePayments();
+
+        assertEquals(List.of(), bankCalls(), "a freshly created recurring payment must not run before its first interval elapses");
+    }
+
+    @Test
+    void recurringPayment_whenDue_theSchedulerActuallyMovesTheMoney() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        bankHasUser(RAVI, "RAVI SHARMA", 2000.0);
+        transferSucceeds();
+        String token = login(ASHA);
+        String body = mockMvc.perform(createRecurring(token, RAVI, "100", 7))
+                .andReturn().getResponse().getContentAsString();
+        long id = ((Number) JsonPath.read(body, "$.id")).longValue();
+        forceDueNow(id);
+        bank.resetRequests();
+
+        recurringPaymentService.runDuePayments();
+
+        assertEquals(List.of(TRANSFER), bankCalls());
+        String transferBody = transferRequestBodies().get(0);
+        assertEquals(ASHA, ((Number) JsonPath.read(transferBody, "$.payerPhno")).longValue(), transferBody);
+        assertEquals(RAVI, ((Number) JsonPath.read(transferBody, "$.receiverPhno")).longValue(), transferBody);
+        RecurringPayment after = recurringPaymentRepository.findById(id).orElseThrow();
+        assertEquals(RecurringPaymentStatus.ACTIVE, after.getStatus());
+        assertTrue(after.getNextRunAt().isAfter(Instant.now()), "advanced to a future run, not left due again immediately");
+    }
+
+    // Simulates two overlapping scheduler ticks both picking up the exact same due occurrence (e.g. one read the
+    // row before the other's save() advanced it) by forcing nextRunAt back to the same value between two real
+    // calls to runDuePayments(). The idempotency key is derived from nextRunAt, so both ticks compute the same
+    // key - sendMoney's own idempotency lookup is what stops the second one from ever reaching the bank again.
+    @Test
+    void recurringPayment_runningTheSameDueMomentTwice_movesMoneyOnlyOnce() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        bankHasUser(RAVI, "RAVI SHARMA", 2000.0);
+        transferSucceeds();
+        String token = login(ASHA);
+        String body = mockMvc.perform(createRecurring(token, RAVI, "100", 7))
+                .andReturn().getResponse().getContentAsString();
+        long id = ((Number) JsonPath.read(body, "$.id")).longValue();
+        forceDueNow(id);
+        Instant dueMoment = recurringPaymentRepository.findById(id).orElseThrow().getNextRunAt();
+        bank.resetRequests();
+
+        recurringPaymentService.runDuePayments();
+
+        RecurringPayment stillAtTheSameDueMoment = recurringPaymentRepository.findById(id).orElseThrow();
+        stillAtTheSameDueMoment.setNextRunAt(dueMoment);
+        recurringPaymentRepository.save(stillAtTheSameDueMoment);
+        recurringPaymentService.runDuePayments();
+
+        assertEquals(List.of(TRANSFER), bankCalls(), "the second tick must reuse the first tick's cached result, not call the bank again");
+    }
+
+    @Test
+    void recurringPayment_bankRefusesTheTransfer_pausesIt_withoutStoppingOtherDuePayments() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        bankHasUser(RAVI, "RAVI SHARMA", 2000.0);
+        bankHasUser(MEENA, "MEENA RAO", 3000.0);
+        transferSucceeds();
+        String token = login(ASHA);
+        String failingBody = mockMvc.perform(createRecurring(token, RAVI, "100", 7))
+                .andReturn().getResponse().getContentAsString();
+        long failingId = ((Number) JsonPath.read(failingBody, "$.id")).longValue();
+        String healthyBody = mockMvc.perform(createRecurring(token, MEENA, "50", 7))
+                .andReturn().getResponse().getContentAsString();
+        long healthyId = ((Number) JsonPath.read(healthyBody, "$.id")).longValue();
+        forceDueNow(failingId);
+        forceDueNow(healthyId);
+        transferIsRefused("Insufficient Funds");   // refuses whichever transfer runs first...
+        bank.resetRequests();
+
+        recurringPaymentService.runDuePayments();
+
+        RecurringPayment failing = recurringPaymentRepository.findById(failingId).orElseThrow();
+        RecurringPayment healthy = recurringPaymentRepository.findById(healthyId).orElseThrow();
+        // ...both got refused (one stub for the whole endpoint), so both are paused - what matters here is that
+        // one failing payment never throws out of the loop and stops the rest from being attempted at all.
+        assertEquals(RecurringPaymentStatus.PAUSED, failing.getStatus());
+        assertEquals(RecurringPaymentStatus.PAUSED, healthy.getStatus());
+        assertEquals(2, bankCalls().size(), "the scheduler must still attempt every due payment, not stop at the first failure");
+    }
+
+    @Test
+    void recurringPayment_pauseThenResume_recomputesNextRunAtFromNow() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        bankHasUser(RAVI, "RAVI SHARMA", 2000.0);
+        String token = login(ASHA);
+        String body = mockMvc.perform(createRecurring(token, RAVI, "100", 7))
+                .andReturn().getResponse().getContentAsString();
+        long id = ((Number) JsonPath.read(body, "$.id")).longValue();
+
+        mockMvc.perform(as(token, post("/phonepe/recurring/" + id + "/pause")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PAUSED"));
+
+        forceDueNow(id);   // even overdue, a paused one must not run
+        bank.resetRequests();
+        recurringPaymentService.runDuePayments();
+        assertEquals(List.of(), bankCalls(), "a paused recurring payment must never run");
+
+        mockMvc.perform(as(token, post("/phonepe/recurring/" + id + "/resume")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACTIVE"));
+    }
+
+    @Test
+    void recurringPayment_cancel_stopsItPermanently() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        bankHasUser(RAVI, "RAVI SHARMA", 2000.0);
+        String token = login(ASHA);
+        String body = mockMvc.perform(createRecurring(token, RAVI, "100", 7))
+                .andReturn().getResponse().getContentAsString();
+        long id = ((Number) JsonPath.read(body, "$.id")).longValue();
+
+        mockMvc.perform(as(token, delete("/phonepe/recurring/" + id)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CANCELLED"));
+
+        forceDueNow(id);
+        bank.resetRequests();
+        recurringPaymentService.runDuePayments();
+        assertEquals(List.of(), bankCalls(), "a cancelled recurring payment must never run");
+    }
+
+    @Test
+    void recurringPayment_toAnUnknownNumber_isRejected() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 1000.0);
+        String token = login(ASHA);
+
+        mockMvc.perform(createRecurring(token, RAVI, "100", 7))
+                .andExpect(status().isNotFound())
+                .andExpect(content().string("User not found"));
     }
 
     // ============ many payments at the same moment ============
