@@ -52,12 +52,13 @@ public class WebConfig implements WebMvcConfigurer {
         // Rate-limited per authenticated account (registered AFTER AuthInterceptor, so the phno attribute it sets
         // is already there): protects against a compromised or scripted client hammering either way of moving
         // money out of this account. Shares one combined budget, the same way Bankapplication's deposit/withdraw
-        // share one budget - makePayment debits through the exact same bank call as sendMoney, so leaving it
-        // unthrottled would have left the whole protection with a hole in it.
+        // share one budget - makePayment debits through the exact same bank call as sendMoney (and refund
+        // through the deposit call), so leaving any of them unthrottled would have left the whole protection
+        // with a hole in it.
         registry.addInterceptor(new RateLimitInterceptor(
                         new RateLimiter(maxSendMoneyAttemptsPerAccount, RATE_WINDOW, clock),
                         request -> String.valueOf(request.getAttribute(AuthInterceptor.AUTHENTICATED_PHNO)),
                         "Too many payment requests. Please wait a minute and try again."))
-                .addPathPatterns("/phonepe/sendmoney", "/phonepe/makepayment");
+                .addPathPatterns("/phonepe/sendmoney", "/phonepe/makepayment", "/phonepe/transactions/*/refund");
     }
 }

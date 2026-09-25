@@ -14,10 +14,14 @@ public record TransactionResponse(long transactionId, String mode, String direct
 
     public static TransactionResponse from(Transaction t, long viewer) {
         Long receiver = t.getReceiverPhno() == null || t.getReceiverPhno() == 0 ? null : t.getReceiverPhno();
+        // A "Refund" row's phno is the person being credited back (see PhonepeService.refund()), the opposite
+        // of every other mode, where phno is who money left. So its DEBIT/CREDIT sense is inverted too.
+        boolean isRefund = "Refund".equals(t.getMode());
+        String direction = (t.getPhno() == viewer) != isRefund ? "DEBIT" : "CREDIT";
         return new TransactionResponse(
                 t.getTransactionId(),
                 t.getMode(),
-                t.getPhno() == viewer ? "DEBIT" : "CREDIT",
+                direction,
                 t.getPhno(),
                 receiver,
                 t.getAmount(),

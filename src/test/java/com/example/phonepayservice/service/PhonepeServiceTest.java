@@ -812,4 +812,111 @@ class PhonepeServiceTest {
 
         assertEquals("Transaction not found", ex.getMessage());
     }
+
+    // ============ refund ============
+
+    private Transaction payment(long transactionId, long payer, TransactionStatus status) {
+        Transaction t = new Transaction();
+        t.setTransactionId(transactionId);
+        t.setPhno(payer);
+        t.setReceiverPhno(null);
+        t.setMode("Payment");
+        t.setStatus(status);
+        t.setAmount(AMOUNT);
+        return t;
+    }
+
+    @Test
+    void refund_creditsTheOriginalAmountBackAndRecordsARefundRow() {
+        when(transactions.findByTransactionId(100000)).thenReturn(Optional.of(payment(100000, PAYER, TransactionStatus.COMPLETED)));
+        when(transactions.findByRefundOfTransactionId(100000)).thenReturn(Optional.empty());
+
+        Transaction t = service.refund(PAYER, 100000, null);
+
+        verify(bank).deposit(PAYER, AMOUNT);
+        verify(bank, never()).withdraw(any(Long.class), any());
+        assertEquals("Refund", t.getMode());
+        assertEquals(PAYER, t.getPhno());
+        assertNull(t.getReceiverPhno());
+        assertEquals(100000L, t.getRefundOfTransactionId());
+        assertEquals(TransactionStatus.COMPLETED, t.getStatus());
+        assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.COMPLETED), writes);
+    }
+
+    @Test
+    void refund_ofSomeoneElsesPayment_isNotFound_notForbidden() {
+        when(transactions.findByTransactionId(100000)).thenReturn(Optional.of(payment(100000, STRANGER, TransactionStatus.COMPLETED)));
+
+        assertThrows(TransactionNotFoundException.class, () -> service.refund(PAYER, 100000, null));
+        verifyNoInteractions(bank);
+    }
+
+    @Test
+    void refund_ofAP2PTransfer_isRejected() {
+        when(transactions.findByTransactionId(100000)).thenReturn(Optional.of(row(100000, PAYER, RECEIVER, TransactionStatus.COMPLETED)));
+
+        assertThrows(InvalidRequestException.class, () -> service.refund(PAYER, 100000, null));
+        verifyNoInteractions(bank);
+    }
+
+    @Test
+    void refund_ofAPendingPayment_isRejected() {
+        when(transactions.findByTransactionId(100000)).thenReturn(Optional.of(payment(100000, PAYER, TransactionStatus.PENDING)));
+
+        assertThrows(InvalidRequestException.class, () -> service.refund(PAYER, 100000, null));
+        verifyNoInteractions(bank);
+    }
+
+    @Test
+    void refund_ofAnAlreadyRefundedPayment_isRejected() {
+        when(transactions.findByTransactionId(100000)).thenReturn(Optional.of(payment(100000, PAYER, TransactionStatus.COMPLETED)));
+        Transaction priorRefund = new Transaction();
+        priorRefund.setRefundOfTransactionId(100000L);
+        when(transactions.findByRefundOfTransactionId(100000)).thenReturn(Optional.of(priorRefund));
+
+        InvalidRequestException ex = assertThrows(InvalidRequestException.class, () -> service.refund(PAYER, 100000, null));
+
+        assertEquals("This payment has already been refunded", ex.getMessage());
+        verifyNoInteractions(bank);
+    }
+
+    @Test
+    void refund_sameIdempotencyKeyAndSameOriginal_returnsTheExistingRefund_withoutCallingTheBankAgain() {
+        Transaction existing = new Transaction();
+        existing.setTransactionId(100001);
+        existing.setPhno(PAYER);
+        existing.setRefundOfTransactionId(100000L);
+        existing.setAmount(AMOUNT);
+        existing.setStatus(TransactionStatus.COMPLETED);
+        when(transactions.findByPhnoAndIdempotencyKey(PAYER, "refund-key")).thenReturn(Optional.of(existing));
+
+        Transaction t = service.refund(PAYER, 100000, "refund-key");
+
+        assertEquals(existing, t);
+        verifyNoInteractions(bank);
+    }
+
+    @Test
+    void refund_sameIdempotencyKey_differentOriginal_throwsInvalidRequest() {
+        Transaction existing = new Transaction();
+        existing.setPhno(PAYER);
+        existing.setRefundOfTransactionId(999999L);
+        when(transactions.findByPhnoAndIdempotencyKey(PAYER, "refund-key")).thenReturn(Optional.of(existing));
+
+        assertThrows(InvalidRequestException.class, () -> service.refund(PAYER, 100000, "refund-key"));
+        verifyNoInteractions(bank);
+    }
+
+    @Test
+    void refund_bankOutcomeUnknown_needsAPerson_andLeavesTheOriginalPaymentCompleted() {
+        Transaction original = payment(100000, PAYER, TransactionStatus.COMPLETED);
+        when(transactions.findByTransactionId(100000)).thenReturn(Optional.of(original));
+        when(transactions.findByRefundOfTransactionId(100000)).thenReturn(Optional.empty());
+        doThrow(new BankOutcomeUnknownException("timeout", null)).when(bank).deposit(eq(PAYER), any());
+
+        assertThrows(TransferFailedException.class, () -> service.refund(PAYER, 100000, null));
+
+        assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.NEEDS_RECONCILIATION), writes);
+        assertEquals(TransactionStatus.COMPLETED, original.getStatus());
+    }
 }

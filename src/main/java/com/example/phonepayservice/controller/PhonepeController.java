@@ -13,6 +13,7 @@ import com.example.phonepayservice.dto.PayeeResponse;
 import com.example.phonepayservice.dto.PaymentRequest;
 import com.example.phonepayservice.dto.ProfileResponse;
 import com.example.phonepayservice.dto.RecurringPaymentResponse;
+import com.example.phonepayservice.dto.RefundRequest;
 import com.example.phonepayservice.dto.SavePayeeRequest;
 import com.example.phonepayservice.dto.SendMoneyRequest;
 import com.example.phonepayservice.dto.TransactionResponse;
@@ -88,6 +89,16 @@ public class PhonepeController {
     public TransactionResponse makePayment(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
                                            @Valid @RequestBody PaymentRequest request) {
         return TransactionResponse.from(phonepeService.makePayment(caller, request.amount(), request.note(), request.idempotencyKey()), caller);
+    }
+
+    // Full refund only, and only of a completed makepayment (not a P2P sendMoney - ask for that back with a
+    // MoneyRequest instead). request may be omitted entirely when no idempotency key is needed.
+    @PostMapping("/transactions/{transactionId}/refund")
+    public TransactionResponse refund(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
+                                      @PathVariable long transactionId,
+                                      @RequestBody(required = false) @Valid RefundRequest request) {
+        String idempotencyKey = request == null ? null : request.idempotencyKey();
+        return TransactionResponse.from(phonepeService.refund(caller, transactionId, idempotencyKey), caller);
     }
 
     @GetMapping("/transactions")
