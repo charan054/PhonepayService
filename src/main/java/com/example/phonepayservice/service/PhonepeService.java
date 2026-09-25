@@ -110,7 +110,7 @@ public class PhonepeService {
         // No pre-flight check on the receiver here: the bank's transfer is atomic, so if the receiver does not
         // exist the whole call fails with nothing moved - a separate lookup first would only add a network
         // round trip without adding any safety.
-        RecordOutcome outcome = record(payer, receiver, value, "Transfer", note, key);
+        RecordOutcome outcome = record(payer, receiver, value, "Transfer", note, key, null);
         if (!outcome.isNew()) {
             // lost a race with a concurrent request carrying the same key; that request owns this payment
             return matchingExistingOrThrow(outcome.transaction(), receiver, value);
@@ -129,12 +129,49 @@ public class PhonepeService {
             }
         }
         BigDecimal value = requireValidAmount(amount);
-        RecordOutcome outcome = record(payer, null, value, "Payment", note, key);
+        RecordOutcome outcome = record(payer, null, value, "Payment", note, key, null);
         if (!outcome.isNew()) {
             return matchingExistingOrThrow(outcome.transaction(), null, value);
         }
         Transaction t = outcome.transaction();
         debit(t, payer, value);
+        return settle(t, TransactionStatus.COMPLETED, null);
+    }
+
+    /**
+     * Reverses a completed makepayment, in full, back to the same account it debited. Only the payer of that
+     * exact payment can refund it (transaction() below enforces this the same way viewing one does), only a
+     * completed "Payment" can be refunded (not a P2P transfer - see MoneyRequestService for asking a person for
+     * their money back instead), and only once (the unique index on refundOfTransactionId is the real
+     * guarantee; the findByRefundOfTransactionId check here just gives a clean error instead of a raw
+     * constraint violation on the common path).
+     */
+    public Transaction refund(long payer, long originalTransactionId, String idempotencyKey) {
+        String key = normalizeKey(idempotencyKey);
+        if (key != null) {
+            Transaction existing = transactions.findByPhnoAndIdempotencyKey(payer, key).orElse(null);
+            if (existing != null) {
+                return matchingRefundOrThrow(existing, originalTransactionId);
+            }
+        }
+        Transaction original = transaction(payer, originalTransactionId);
+        if (!"Payment".equals(original.getMode())) {
+            throw new InvalidRequestException("Only a payment can be refunded");
+        }
+        if (original.getStatus() != TransactionStatus.COMPLETED) {
+            throw new InvalidRequestException("Only a completed payment can be refunded");
+        }
+        if (transactions.findByRefundOfTransactionId(originalTransactionId).isPresent()) {
+            throw new InvalidRequestException("This payment has already been refunded");
+        }
+
+        RecordOutcome outcome = record(payer, null, original.getAmount(), "Refund",
+                "Refund for transaction " + originalTransactionId, key, originalTransactionId);
+        if (!outcome.isNew()) {
+            return matchingRefundOrThrow(outcome.transaction(), originalTransactionId);
+        }
+        Transaction t = outcome.transaction();
+        credit(t, payer, original.getAmount());
         return settle(t, TransactionStatus.COMPLETED, null);
     }
 
@@ -204,6 +241,22 @@ public class PhonepeService {
         }
     }
 
+    private void credit(Transaction t, long payer, BigDecimal amount) {
+        try {
+            bank.deposit(payer, amount);
+        } catch (BankOutcomeUnknownException e) {
+            // The deposit may or may not have happened - leave this NEEDS_RECONCILIATION rather than guess,
+            // same as an unresolved debit. The original payment is untouched either way: it stays COMPLETED,
+            // and the unique index on refundOfTransactionId still stops a second refund attempt from here on.
+            unresolved(t, "Deposit not confirmed by the bank: " + e.getMessage());
+            throw new TransferFailedException("We could not confirm your refund with the bank. Check your balance and "
+                    + "transactions before trying again. Reference: " + t.getTransactionId());
+        } catch (RuntimeException e) {
+            settle(t, TransactionStatus.FAILED, e.getMessage());
+            throw e;
+        }
+    }
+
     // The bank's transfer moves both legs in one database transaction, so unlike the old separate
     // withdraw-then-deposit design there is no window where only one side has happened, and no refund logic is
     // needed: either it goes through completely, or the bank guarantees nothing changed.
@@ -259,7 +312,8 @@ public class PhonepeService {
     // the caller must return it as-is and must NOT call the bank again.
     private record RecordOutcome(Transaction transaction, boolean isNew) {}
 
-    private RecordOutcome record(long payer, Long receiver, BigDecimal amount, String mode, String note, String idempotencyKey) {
+    private RecordOutcome record(long payer, Long receiver, BigDecimal amount, String mode, String note,
+                                  String idempotencyKey, Long refundOfTransactionId) {
         for (int attempt = 1; ; attempt++) {
             Transaction t = new Transaction();
             t.setTransactionId(nextTransactionId());
@@ -271,6 +325,7 @@ public class PhonepeService {
             t.setCreatedAt(clock.instant());
             t.setNote(note == null || note.isBlank() ? null : note.trim());
             t.setIdempotencyKey(idempotencyKey);
+            t.setRefundOfTransactionId(refundOfTransactionId);
             try {
                 return new RecordOutcome(transactions.saveAndFlush(t), true);
             } catch (DataIntegrityViolationException e) {
@@ -299,6 +354,13 @@ public class PhonepeService {
     private Transaction matchingExistingOrThrow(Transaction existing, Long expectedReceiver, BigDecimal expectedAmount) {
         boolean receiverMatches = Objects.equals(existing.getReceiverPhno(), expectedReceiver);
         if (!receiverMatches || existing.getAmount().compareTo(expectedAmount) != 0) {
+            throw new InvalidRequestException("This idempotency key was already used for a different request.");
+        }
+        return existing;
+    }
+
+    private Transaction matchingRefundOrThrow(Transaction existing, long expectedOriginalTransactionId) {
+        if (!Objects.equals(existing.getRefundOfTransactionId(), expectedOriginalTransactionId)) {
             throw new InvalidRequestException("This idempotency key was already used for a different request.");
         }
         return existing;

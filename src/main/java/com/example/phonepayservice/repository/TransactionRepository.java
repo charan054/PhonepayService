@@ -16,6 +16,7 @@ import java.util.Optional;
 public interface TransactionRepository extends JpaRepository<Transaction, Long> {
     Optional<Transaction> findByTransactionId(long transactionId);
     Optional<Transaction> findByPhnoAndIdempotencyKey(long phno, String idempotencyKey);
+    Optional<Transaction> findByRefundOfTransactionId(long transactionId);
     // Everything a person paid, plus completed payments they received - a pending/failed/needs-reconciliation
     // payment is hidden from its receiver, since the money never reliably reached them (see PhonepeService).
     // from/to/counterparty/noteContains are all optional: the (:x IS NULL OR ...) form lets one query serve
@@ -35,23 +36,26 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
 
     // Only ever counts COMPLETED (or legacy-null) transactions - a PENDING/FAILED/NEEDS_RECONCILIATION row is
     // not money that actually moved, so it must not inflate a spending summary the way it's allowed to still
-    // appear (to its payer only) in the plain history list.
-    @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t WHERE t.phno = :viewer "
+    // appear (to its payer only) in the plain history list. A "Refund" row has phno = the person being credited
+    // (see PhonepeService.refund()), so it must count as received, not sent - excluded here and picked up below.
+    @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t WHERE t.phno = :viewer AND t.mode <> 'Refund' "
             + "AND (t.status IS NULL OR t.status = com.example.phonepayservice.entity.TransactionStatus.COMPLETED) "
             + "AND t.createdAt >= :from AND t.createdAt <= :to")
     BigDecimal sumSent(@Param("viewer") long viewer, @Param("from") Instant from, @Param("to") Instant to);
 
-    @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t WHERE t.receiverPhno = :viewer "
+    @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t WHERE "
+            + "(t.receiverPhno = :viewer OR (t.phno = :viewer AND t.mode = 'Refund')) "
             + "AND (t.status IS NULL OR t.status = com.example.phonepayservice.entity.TransactionStatus.COMPLETED) "
             + "AND t.createdAt >= :from AND t.createdAt <= :to")
     BigDecimal sumReceived(@Param("viewer") long viewer, @Param("from") Instant from, @Param("to") Instant to);
 
-    @Query("SELECT COUNT(t) FROM Transaction t WHERE t.phno = :viewer "
+    @Query("SELECT COUNT(t) FROM Transaction t WHERE t.phno = :viewer AND t.mode <> 'Refund' "
             + "AND (t.status IS NULL OR t.status = com.example.phonepayservice.entity.TransactionStatus.COMPLETED) "
             + "AND t.createdAt >= :from AND t.createdAt <= :to")
     long countSent(@Param("viewer") long viewer, @Param("from") Instant from, @Param("to") Instant to);
 
-    @Query("SELECT COUNT(t) FROM Transaction t WHERE t.receiverPhno = :viewer "
+    @Query("SELECT COUNT(t) FROM Transaction t WHERE "
+            + "(t.receiverPhno = :viewer OR (t.phno = :viewer AND t.mode = 'Refund')) "
             + "AND (t.status IS NULL OR t.status = com.example.phonepayservice.entity.TransactionStatus.COMPLETED) "
             + "AND t.createdAt >= :from AND t.createdAt <= :to")
     long countReceived(@Param("viewer") long viewer, @Param("from") Instant from, @Param("to") Instant to);
