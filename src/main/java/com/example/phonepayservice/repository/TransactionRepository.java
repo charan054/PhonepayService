@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Optional;
 
@@ -31,4 +32,27 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
     // null when the table is empty
     @Query("select max(t.transactionId) from Transaction t")
     Long findMaxTransactionId();
+
+    // Only ever counts COMPLETED (or legacy-null) transactions - a PENDING/FAILED/NEEDS_RECONCILIATION row is
+    // not money that actually moved, so it must not inflate a spending summary the way it's allowed to still
+    // appear (to its payer only) in the plain history list.
+    @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t WHERE t.phno = :viewer "
+            + "AND (t.status IS NULL OR t.status = com.example.phonepayservice.entity.TransactionStatus.COMPLETED) "
+            + "AND t.createdAt >= :from AND t.createdAt <= :to")
+    BigDecimal sumSent(@Param("viewer") long viewer, @Param("from") Instant from, @Param("to") Instant to);
+
+    @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t WHERE t.receiverPhno = :viewer "
+            + "AND (t.status IS NULL OR t.status = com.example.phonepayservice.entity.TransactionStatus.COMPLETED) "
+            + "AND t.createdAt >= :from AND t.createdAt <= :to")
+    BigDecimal sumReceived(@Param("viewer") long viewer, @Param("from") Instant from, @Param("to") Instant to);
+
+    @Query("SELECT COUNT(t) FROM Transaction t WHERE t.phno = :viewer "
+            + "AND (t.status IS NULL OR t.status = com.example.phonepayservice.entity.TransactionStatus.COMPLETED) "
+            + "AND t.createdAt >= :from AND t.createdAt <= :to")
+    long countSent(@Param("viewer") long viewer, @Param("from") Instant from, @Param("to") Instant to);
+
+    @Query("SELECT COUNT(t) FROM Transaction t WHERE t.receiverPhno = :viewer "
+            + "AND (t.status IS NULL OR t.status = com.example.phonepayservice.entity.TransactionStatus.COMPLETED) "
+            + "AND t.createdAt >= :from AND t.createdAt <= :to")
+    long countReceived(@Param("viewer") long viewer, @Param("from") Instant from, @Param("to") Instant to);
 }

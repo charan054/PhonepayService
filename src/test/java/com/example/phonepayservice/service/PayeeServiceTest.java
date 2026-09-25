@@ -1,9 +1,12 @@
 package com.example.phonepayservice.service;
 
+import com.example.phonepayservice.client.BankGateway;
+import com.example.phonepayservice.dto.BankUser;
 import com.example.phonepayservice.dto.PayeeResponse;
 import com.example.phonepayservice.entity.SavedPayee;
 import com.example.phonepayservice.exception.InvalidRequestException;
 import com.example.phonepayservice.exception.PayeeNotFoundException;
+import com.example.phonepayservice.exception.UserNotExistException;
 import com.example.phonepayservice.repository.SavedPayeeRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -41,12 +45,14 @@ class PayeeServiceTest {
 
     @Mock
     private SavedPayeeRepository payees;
+    @Mock
+    private BankGateway bank;
 
     private PayeeService service;
 
     @BeforeEach
     void setUp() {
-        service = new PayeeService(payees, new FixedClock());
+        service = new PayeeService(payees, new FixedClock(), bank);
     }
 
     private SavedPayee stored(long id, long ownerPhno, long payeePhno, String nickname, Instant createdAt) {
@@ -59,10 +65,17 @@ class PayeeServiceTest {
         return p;
     }
 
+    private BankUser bankUser(String name) {
+        BankUser u = new BankUser();
+        u.setName(name);
+        return u;
+    }
+
     // ---------- save ----------
 
     @Test
     void save_newPayee_createsIt_withTheGivenNickname_andTheCurrentMoment() {
+        when(bank.findUser(PAYEE)).thenReturn(bankUser("Ravi Kumar"));
         when(payees.findByOwnerPhnoAndPayeePhno(OWNER, PAYEE)).thenReturn(Optional.empty());
         when(payees.save(any(SavedPayee.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -77,8 +90,32 @@ class PayeeServiceTest {
         assertEquals(NOW, captor.getValue().getCreatedAt());
     }
 
+    // The bank's confirmed name is returned so the UI can show "Saved: Ravi Kumar" - proof the number is real,
+    // not just whatever nickname the caller typed.
+    @Test
+    void save_returnsTheBanksConfirmedName_notJustTheNickname() {
+        when(bank.findUser(PAYEE)).thenReturn(bankUser("Ravi Kumar"));
+        when(payees.findByOwnerPhnoAndPayeePhno(OWNER, PAYEE)).thenReturn(Optional.empty());
+        when(payees.save(any(SavedPayee.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        PayeeResponse response = service.save(OWNER, PAYEE, "Ravi");
+
+        assertEquals("Ravi Kumar", response.payeeName());
+    }
+
+    // A typo'd or nonexistent number must be caught here, not only once a payment to it is actually attempted.
+    @Test
+    void save_bankDoesNotRecognizeTheNumber_throwsUserNotExist_andNeverWritesToTheDatabase() {
+        when(bank.findUser(PAYEE)).thenThrow(new UserNotExistException("User not found"));
+
+        assertThrows(UserNotExistException.class, () -> service.save(OWNER, PAYEE, "Ravi"));
+
+        verify(payees, never()).save(any());
+    }
+
     @Test
     void save_sameNumberAgain_updatesTheNickname_insteadOfCreatingASecondEntry() {
+        when(bank.findUser(PAYEE)).thenReturn(bankUser("Ravi Kumar"));
         Instant originalCreatedAt = Instant.parse("2020-01-01T00:00:00Z");
         SavedPayee existing = stored(1, OWNER, PAYEE, "Old name", originalCreatedAt);
         when(payees.findByOwnerPhnoAndPayeePhno(OWNER, PAYEE)).thenReturn(Optional.of(existing));
@@ -95,6 +132,7 @@ class PayeeServiceTest {
 
     @Test
     void save_blankNickname_isStoredAsNull() {
+        when(bank.findUser(PAYEE)).thenReturn(bankUser("Ravi Kumar"));
         when(payees.findByOwnerPhnoAndPayeePhno(OWNER, PAYEE)).thenReturn(Optional.empty());
         when(payees.save(any(SavedPayee.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -103,11 +141,13 @@ class PayeeServiceTest {
         assertNull(response.nickname());
     }
 
+    // The self-check must run before ever asking the bank about the number.
     @Test
-    void save_yourself_throwsInvalidRequest() {
+    void save_yourself_throwsInvalidRequest_withoutAskingTheBank() {
         assertThrows(InvalidRequestException.class, () -> service.save(OWNER, OWNER, "Me"));
 
         verify(payees, never()).save(any());
+        verifyNoInteractions(bank);
     }
 
     // ---------- list ----------

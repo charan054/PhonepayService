@@ -5,9 +5,11 @@ import com.example.phonepayservice.configuration.WebConfig;
 import com.example.phonepayservice.dto.BalanceResponse;
 import com.example.phonepayservice.dto.LoginResponse;
 import com.example.phonepayservice.dto.MoneyRequestResponse;
+import com.example.phonepayservice.dto.MonthlySummaryResponse;
 import com.example.phonepayservice.dto.PageResponse;
 import com.example.phonepayservice.dto.PayeeResponse;
 import com.example.phonepayservice.dto.ProfileResponse;
+import com.example.phonepayservice.dto.RecurringPaymentResponse;
 import com.example.phonepayservice.entity.Transaction;
 import com.example.phonepayservice.entity.TransactionStatus;
 import com.example.phonepayservice.exception.AccountLockedException;
@@ -18,6 +20,7 @@ import com.example.phonepayservice.exception.InvalidCredentialsException;
 import com.example.phonepayservice.exception.InvalidRequestException;
 import com.example.phonepayservice.exception.MoneyRequestNotFoundException;
 import com.example.phonepayservice.exception.PayeeNotFoundException;
+import com.example.phonepayservice.exception.RecurringPaymentNotFoundException;
 import com.example.phonepayservice.exception.TransactionNotFoundException;
 import com.example.phonepayservice.exception.TransferFailedException;
 import com.example.phonepayservice.exception.UserNotExistException;
@@ -25,6 +28,7 @@ import com.example.phonepayservice.exception.UserNotRegisteredException;
 import com.example.phonepayservice.service.MoneyRequestService;
 import com.example.phonepayservice.service.PayeeService;
 import com.example.phonepayservice.service.PhonepeService;
+import com.example.phonepayservice.service.RecurringPaymentService;
 import com.example.phonepayservice.service.SessionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -48,6 +52,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -79,6 +84,8 @@ class PhonepeControllerTest {
     private PayeeService payeeService;
     @MockitoBean
     private MoneyRequestService moneyRequestService;
+    @MockitoBean
+    private RecurringPaymentService recurringPaymentService;
     @MockitoBean
     private SessionService sessionService;
 
@@ -121,10 +128,16 @@ class PhonepeControllerTest {
                 post("/phonepe/makepayment").contentType(MediaType.APPLICATION_JSON).content("{\"amount\":10}"),
                 get("/phonepe/transactions"),
                 get("/phonepe/transactions/100000"),
+                get("/phonepe/summary"),
                 post("/phonepe/requests").contentType(MediaType.APPLICATION_JSON).content("{\"payerPhno\":9123456789,\"amount\":10}"),
                 get("/phonepe/requests"),
                 post("/phonepe/requests/1/approve"),
-                post("/phonepe/requests/1/decline"));
+                post("/phonepe/requests/1/decline"),
+                post("/phonepe/recurring").contentType(MediaType.APPLICATION_JSON).content("{\"payeePhno\":9123456789,\"amount\":10,\"intervalDays\":7}"),
+                get("/phonepe/recurring"),
+                post("/phonepe/recurring/1/pause"),
+                post("/phonepe/recurring/1/resume"),
+                delete("/phonepe/recurring/1"));
     }
 
     @Test
@@ -716,22 +729,61 @@ class PhonepeControllerTest {
                 .andExpect(status().isBadRequest());
     }
 
+    // ============ GET /phonepe/summary ============
+
+    @Test
+    void summary_defaultsToNoMonthParameter_whenNoneGiven() throws Exception {
+        when(phonepeService.monthlySummary(eq(CALLER), isNull())).thenReturn(
+                new MonthlySummaryResponse("2026-09", new BigDecimal("100.00"), 2, new BigDecimal("50.00"), 1));
+
+        mockMvc.perform(asCaller(get("/phonepe/summary")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.month").value("2026-09"))
+                .andExpect(jsonPath("$.totalSent").value(100.00))
+                .andExpect(jsonPath("$.sentCount").value(2))
+                .andExpect(jsonPath("$.totalReceived").value(50.00))
+                .andExpect(jsonPath("$.receivedCount").value(1));
+
+        verify(phonepeService).monthlySummary(CALLER, null);
+    }
+
+    @Test
+    void summary_passesAnExplicitMonthThrough() throws Exception {
+        when(phonepeService.monthlySummary(CALLER, "2026-01")).thenReturn(
+                new MonthlySummaryResponse("2026-01", BigDecimal.ZERO, 0, BigDecimal.ZERO, 0));
+
+        mockMvc.perform(asCaller(get("/phonepe/summary")).param("month", "2026-01"))
+                .andExpect(status().isOk());
+
+        verify(phonepeService).monthlySummary(CALLER, "2026-01");
+    }
+
+    @Test
+    void summary_invalidMonth_returns400() throws Exception {
+        when(phonepeService.monthlySummary(CALLER, "not-a-month")).thenThrow(new InvalidRequestException("month must be in YYYY-MM format."));
+
+        mockMvc.perform(asCaller(get("/phonepe/summary")).param("month", "not-a-month"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("month must be in YYYY-MM format."));
+    }
+
     // ============ POST /phonepe/payees ============
 
     @Test
     void savePayee_returnsTheSavedPayee() throws Exception {
-        when(payeeService.save(CALLER, RECEIVER, "Ravi")).thenReturn(new PayeeResponse(RECEIVER, "Ravi"));
+        when(payeeService.save(CALLER, RECEIVER, "Ravi")).thenReturn(new PayeeResponse(RECEIVER, "Ravi", "Ravi Kumar"));
 
         mockMvc.perform(asCaller(post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"payeePhno\":9123456789,\"nickname\":\"Ravi\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.payeePhno").value(RECEIVER))
-                .andExpect(jsonPath("$.nickname").value("Ravi"));
+                .andExpect(jsonPath("$.nickname").value("Ravi"))
+                .andExpect(jsonPath("$.payeeName").value("Ravi Kumar"));
     }
 
     @Test
     void savePayee_noNickname_isAllowed() throws Exception {
-        when(payeeService.save(CALLER, RECEIVER, null)).thenReturn(new PayeeResponse(RECEIVER, null));
+        when(payeeService.save(CALLER, RECEIVER, null)).thenReturn(new PayeeResponse(RECEIVER, null, "Ravi Kumar"));
 
         mockMvc.perform(asCaller(post("/phonepe/payees")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"payeePhno\":9123456789}"))
@@ -782,7 +834,7 @@ class PhonepeControllerTest {
 
     @Test
     void payees_returnsTheCallersSavedPayees() throws Exception {
-        when(payeeService.listPayees(CALLER)).thenReturn(List.of(new PayeeResponse(RECEIVER, "Ravi")));
+        when(payeeService.listPayees(CALLER)).thenReturn(List.of(new PayeeResponse(RECEIVER, "Ravi", null)));
 
         mockMvc.perform(asCaller(get("/phonepe/payees")))
                 .andExpect(status().isOk())
@@ -925,6 +977,97 @@ class PhonepeControllerTest {
         mockMvc.perform(asCaller(post("/phonepe/requests/1/decline")))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().string("This request has already been resolved"));
+    }
+
+    // ============ POST /phonepe/recurring ============
+
+    private RecurringPaymentResponse recurringPayment(long id, String status, Instant nextRunAt) {
+        return new RecurringPaymentResponse(id, RECEIVER, new BigDecimal("100.00"), "rent", 7, status, NOW, nextRunAt, null);
+    }
+
+    @Test
+    void createRecurringPayment_returnsTheCreatedOne() throws Exception {
+        when(recurringPaymentService.create(CALLER, RECEIVER, new BigDecimal("100"), "rent", 7))
+                .thenReturn(recurringPayment(1, "ACTIVE", NOW.plusSeconds(604800)));
+
+        mockMvc.perform(asCaller(post("/phonepe/recurring")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payeePhno\":9123456789,\"amount\":100,\"note\":\"rent\",\"intervalDays\":7}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(1))
+                .andExpect(jsonPath("$.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.intervalDays").value(7));
+    }
+
+    @Test
+    void createRecurringPayment_invalidInterval_returns400() throws Exception {
+        mockMvc.perform(asCaller(post("/phonepe/recurring")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payeePhno\":9123456789,\"amount\":100,\"intervalDays\":0}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("Interval must be at least 1 day"));
+
+        verifyNoInteractions(recurringPaymentService);
+    }
+
+    @Test
+    void createRecurringPayment_yourself_returns400() throws Exception {
+        when(recurringPaymentService.create(CALLER, CALLER, new BigDecimal("100"), null, 7))
+                .thenThrow(new InvalidRequestException("You cannot set up a recurring payment to yourself"));
+
+        mockMvc.perform(asCaller(post("/phonepe/recurring")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payeePhno\":9876543210,\"amount\":100,\"intervalDays\":7}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("You cannot set up a recurring payment to yourself"));
+    }
+
+    // ============ GET /phonepe/recurring ============
+
+    @Test
+    void recurringPayments_returnsTheCallersOwn() throws Exception {
+        when(recurringPaymentService.listFor(CALLER)).thenReturn(List.of(recurringPayment(1, "ACTIVE", NOW.plusSeconds(604800))));
+
+        mockMvc.perform(asCaller(get("/phonepe/recurring")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].status").value("ACTIVE"));
+    }
+
+    // ============ POST /phonepe/recurring/{id}/pause and /resume ============
+
+    @Test
+    void pauseRecurringPayment_pausesIt() throws Exception {
+        when(recurringPaymentService.pause(CALLER, 1)).thenReturn(recurringPayment(1, "PAUSED", NOW.plusSeconds(604800)));
+
+        mockMvc.perform(asCaller(post("/phonepe/recurring/1/pause")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PAUSED"));
+    }
+
+    @Test
+    void pauseRecurringPayment_notFound_returns404() throws Exception {
+        when(recurringPaymentService.pause(CALLER, 1)).thenThrow(new RecurringPaymentNotFoundException("Recurring payment not found"));
+
+        mockMvc.perform(asCaller(post("/phonepe/recurring/1/pause")))
+                .andExpect(status().isNotFound())
+                .andExpect(content().string("Recurring payment not found"));
+    }
+
+    @Test
+    void resumeRecurringPayment_resumesIt() throws Exception {
+        when(recurringPaymentService.resume(CALLER, 1)).thenReturn(recurringPayment(1, "ACTIVE", NOW.plusSeconds(604800)));
+
+        mockMvc.perform(asCaller(post("/phonepe/recurring/1/resume")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACTIVE"));
+    }
+
+    // ============ DELETE /phonepe/recurring/{id} ============
+
+    @Test
+    void cancelRecurringPayment_returnsItCancelled() throws Exception {
+        when(recurringPaymentService.cancel(CALLER, 1)).thenReturn(recurringPayment(1, "CANCELLED", NOW.plusSeconds(604800)));
+
+        mockMvc.perform(asCaller(delete("/phonepe/recurring/1")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CANCELLED"));
     }
 
     // ============ the old, unauthenticated endpoints are gone ============
