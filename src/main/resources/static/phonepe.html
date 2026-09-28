@@ -304,31 +304,19 @@
           font-weight:700;
         }
 
-        .pager{
-          display:flex;
-          align-items:center;
-          justify-content:space-between;
-          gap:10px;
-          margin-top:12px;
-        }
-
-        .pager-btn{
+        .link-btn{
           width:auto;
-          padding:9px 14px;
-          font-size:13px;
-        }
-
-        .pager-btn:disabled{
-          opacity:.45;
-          cursor:not-allowed;
-          transform:none;
-        }
-
-        .pager-label{
-          font-size:13px;
+          background:none;
+          box-shadow:none;
+          color:var(--primary-dark);
           font-weight:800;
-          color:var(--muted);
-          white-space:nowrap;
+          font-size:13px;
+          padding:10px 2px 0;
+          text-decoration:underline;
+        }
+
+        .link-btn:hover{
+          transform:none;
         }
 
         .tx-list{
@@ -579,19 +567,13 @@
                 <h2>My Transactions</h2>
                 <span class="method">GET</span>
             </div>
-            <p>View the payments you sent and the money you received, newest first.</p>
+            <p>View the payments you sent and the money you received, newest first. Opens in its own page so filtering and paging through your history doesn't crowd the dashboard.</p>
             <input type="number" id="transactionsSize" placeholder="Page size (default 20)" min="1" max="100" />
             <input type="datetime-local" id="transactionsFrom" placeholder="From (optional)" />
             <input type="datetime-local" id="transactionsTo" placeholder="To (optional)" />
             <input type="number" id="transactionsCounterparty" placeholder="Payee phone number (optional)" />
             <input type="text" id="transactionsNoteContains" placeholder="Note contains (optional)" maxlength="140" />
-            <button onclick="getMyTransactions()">View Transactions</button>
-            <div class="pager">
-                <button type="button" class="pager-btn" id="transactionsPrevBtn" onclick="changeTransactionsPage(-1)" disabled>&lsaquo; Prev</button>
-                <span id="transactionsPageLabel" class="pager-label"></span>
-                <button type="button" class="pager-btn" id="transactionsNextBtn" onclick="changeTransactionsPage(1)" disabled>Next &rsaquo;</button>
-            </div>
-            <div id="transactionsList" class="tx-list"></div>
+            <button onclick="openTransactionsWindow()">View Transactions</button>
         </div>
 
         <div class="card">
@@ -1008,13 +990,28 @@
       renderMoneyRequestList(data);
     }
 
+    const MONEY_REQUEST_PREVIEW_COUNT = 3;
+    let allMoneyRequests = [];
+
     function renderMoneyRequestList(list) {
+      allMoneyRequests = list || [];
       const container = document.getElementById("moneyRequestList");
-      if (!list || list.length === 0) {
+      if (allMoneyRequests.length === 0) {
         container.innerHTML = `<div class="tx-empty">No money requests.</div>`;
         return;
       }
-      container.innerHTML = list.map(renderMoneyRequestRow).join("");
+      const preview = allMoneyRequests.slice(0, MONEY_REQUEST_PREVIEW_COUNT);
+      const seeAll = allMoneyRequests.length > MONEY_REQUEST_PREVIEW_COUNT
+        ? `<button type="button" class="link-btn" onclick="showAllMoneyRequests()">See all ${allMoneyRequests.length} requests &rsaquo;</button>`
+        : "";
+      container.innerHTML = preview.map(renderMoneyRequestRow).join("") + seeAll;
+    }
+
+    // A read-only history view (approving/declining a pending request still happens from the live preview list
+    // above) - reuses the same "dump everything into a new tab as a table" pattern already used for User
+    // Profile/Send Money/Make Payment, rather than building a second live, actionable list.
+    function showAllMoneyRequests() {
+      openResultTab("Money Requests History", allMoneyRequests);
     }
 
     // OUTGOING (you asked someone) is tinted like a credit since approving it puts money in your account;
@@ -1151,43 +1148,165 @@
       showStatus("Recurring payment cancelled.", "success");
     }
 
-    let transactionsPage = 0;
-
-    async function getMyTransactions() {
-      transactionsPage = 0;
-      await loadTransactionsPage();
-    }
-
-    function changeTransactionsPage(delta) {
-      transactionsPage += delta;
-      loadTransactionsPage();
-    }
-
-    async function loadTransactionsPage() {
+    // My Transactions used to render its paginated list inline in this card, which grew tall fast once someone
+    // had more than a handful of transactions. It now opens as its own page instead - a self-contained document
+    // (own filters, own fetches, own pager) rather than a static dump via openResultTab, since this list is
+    // genuinely paginated/filterable server-side and a static table would lose that. The child window reads the
+    // session token straight from sessionStorage rather than depending on this window staying open - per the
+    // HTML spec, sessionStorage is copied (not shared live, but present) into a new tab opened via window.open
+    // from the same origin, so this works even if the dashboard tab is later closed.
+    function openTransactionsWindow() {
       if (!requireLogin()) return;
-      const size = document.getElementById("transactionsSize").value || 20;
-      const from = document.getElementById("transactionsFrom").value;
-      const to = document.getElementById("transactionsTo").value;
-      const counterparty = document.getElementById("transactionsCounterparty").value;
-      const noteContains = document.getElementById("transactionsNoteContains").value;
 
-      let url = `${BASE_URL}/transactions?page=${transactionsPage}&size=${encodeURIComponent(size)}`;
-      if (from) url += `&from=${encodeURIComponent(new Date(from).toISOString())}`;
-      if (to) url += `&to=${encodeURIComponent(new Date(to).toISOString())}`;
-      if (counterparty) url += `&counterparty=${encodeURIComponent(counterparty)}`;
-      if (noteContains) url += `&noteContains=${encodeURIComponent(noteContains)}`;
+      const initial = {
+        size: document.getElementById("transactionsSize").value || 20,
+        from: document.getElementById("transactionsFrom").value,
+        to: document.getElementById("transactionsTo").value,
+        counterparty: document.getElementById("transactionsCounterparty").value,
+        noteContains: document.getElementById("transactionsNoteContains").value
+      };
 
-      const data = await apiCall(url);
-      transactionsPage = data.page;
-      updateTransactionsPager(data);
-      renderTransactionList("transactionsList", data.content);
-    }
+      const win = window.open("about:blank", "_blank");
+      if (!win) {
+        alert("New tab blocked. Please allow popups/tabs for this page.");
+        return;
+      }
 
-    function updateTransactionsPager(data) {
-      const totalPages = Math.max(data.totalPages, 1);
-      document.getElementById("transactionsPageLabel").textContent = `Page ${data.page + 1} of ${totalPages}`;
-      document.getElementById("transactionsPrevBtn").disabled = data.page <= 0;
-      document.getElementById("transactionsNextBtn").disabled = data.page + 1 >= totalPages;
+      win.document.open();
+      win.document.write(`
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <title>My Transactions</title>
+          <style>
+            *{box-sizing:border-box;margin:0;padding:0;font-family:Inter,Segoe UI,Arial,sans-serif}
+            body{min-height:100vh;background:linear-gradient(135deg,#e0f7ff,#bae6fd,#dbeafe);color:#0f172a}
+            .header{color:#075985;padding:38px 28px 20px;text-align:center}
+            .header h1{font-size:32px;margin-bottom:8px}
+            .header p{color:#0369a1;font-size:15px}
+            .filters{width:min(900px,calc(100% - 32px));margin:0 auto 20px;background:white;border-radius:20px;padding:20px 22px;box-shadow:0 16px 35px rgba(14,165,233,.12);display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;align-items:end}
+            .filters input{border:1px solid #cbd5e1;border-radius:12px;padding:10px 12px;font-size:14px;outline:none}
+            .filters input:focus{border-color:#0284c7;box-shadow:0 0 0 3px rgba(56,189,248,.2)}
+            .filters button{grid-column:1/-1;border:none;border-radius:12px;padding:12px 16px;font-weight:800;color:white;background:linear-gradient(135deg,#38bdf8,#0284c7);cursor:pointer}
+            .content{width:min(900px,calc(100% - 32px));margin:0 auto 20px;display:flex;flex-direction:column;gap:8px}
+            .empty{background:white;border:1px solid #cbd5e1;border-radius:16px;padding:24px;text-align:center;font-weight:800;color:#64748b}
+            .tx-row{background:white;border:1px solid #cbd5e1;border-radius:14px;padding:12px 16px}
+            .tx-row-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+            .tx-amount{font-weight:900;font-size:15px}
+            .tx-amount.debit{color:#dc2626}
+            .tx-amount.credit{color:#16a34a}
+            .tx-row-meta{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:6px;font-size:12px;color:#64748b;font-weight:700}
+            .tx-note{margin-top:6px;font-size:12px;color:#64748b;font-style:italic}
+            .status-badge{padding:4px 10px;border-radius:999px;font-size:11px;font-weight:900}
+            .status-completed{background:#dcfce7;color:#15803d}
+            .status-failed{background:#fee2e2;color:#b91c1c}
+            .status-pending{background:#e2e8f0;color:#475569}
+            .status-needs_reconciliation{background:#fef3c7;color:#92400e}
+            .pager{width:min(900px,calc(100% - 32px));margin:0 auto 40px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+            .pager button{border:none;border-radius:12px;padding:10px 16px;font-weight:800;cursor:pointer;color:white;background:#0284c7}
+            .pager button:disabled{opacity:.45;cursor:not-allowed}
+            .pager-label{font-size:13px;font-weight:800;color:#0369a1}
+          </style>
+        </head>
+        <body>
+          <div class="header"><h1>My Transactions</h1><p>Payments you sent and money you received, newest first.</p></div>
+          <div class="filters">
+            <input type="number" id="size" placeholder="Page size (default 20)" min="1" max="100" value="${escapeHtml(initial.size)}" />
+            <input type="datetime-local" id="from" value="${escapeHtml(initial.from)}" />
+            <input type="datetime-local" id="to" value="${escapeHtml(initial.to)}" />
+            <input type="number" id="counterparty" placeholder="Payee phone number (optional)" value="${escapeHtml(initial.counterparty)}" />
+            <input type="text" id="noteContains" placeholder="Note contains (optional)" maxlength="140" value="${escapeHtml(initial.noteContains)}" />
+            <button type="button" id="applyBtn">Apply Filters</button>
+          </div>
+          <div class="content" id="list"><div class="empty">Loading...</div></div>
+          <div class="pager">
+            <button type="button" id="prevBtn" disabled>&lsaquo; Prev</button>
+            <span class="pager-label" id="pageLabel"></span>
+            <button type="button" id="nextBtn" disabled>Next &rsaquo;</button>
+          </div>
+          <script>
+            const BASE_URL = "${BASE_URL}";
+            const token = sessionStorage.getItem("phonepeToken");
+            let page = 0;
+
+            function escapeHtml(value) {
+              return String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
+            }
+            function formatDate(iso) {
+              try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
+            }
+            function renderRow(t) {
+              const isDebit = t.direction === "DEBIT";
+              const counterparty = isDebit ? t.receiverPhno : t.payerPhno;
+              const counterpartyLabel = counterparty ? (isDebit ? "To " : "From ") + counterparty : (isDebit ? "Payment" : "-");
+              const statusClass = "status-" + String(t.status).toLowerCase();
+              return \`
+                <div class="tx-row">
+                  <div class="tx-row-top">
+                    <span class="tx-amount \${isDebit ? "debit" : "credit"}">\${isDebit ? "-" : "+"}\${escapeHtml(String(t.amount))}</span>
+                    <span class="status-badge \${statusClass}">\${escapeHtml(t.status)}</span>
+                  </div>
+                  <div class="tx-row-meta">
+                    <span>\${escapeHtml(t.mode)} &middot; \${escapeHtml(counterpartyLabel)}</span>
+                    <span>\${escapeHtml(formatDate(t.createdAt))}</span>
+                  </div>
+                  \${t.note ? '<div class="tx-note">' + escapeHtml(t.note) + '</div>' : ""}
+                </div>
+              \`;
+            }
+
+            async function load(delta) {
+              if (typeof delta === "number") page += delta;
+              const size = document.getElementById("size").value || 20;
+              const from = document.getElementById("from").value;
+              const to = document.getElementById("to").value;
+              const counterparty = document.getElementById("counterparty").value;
+              const noteContains = document.getElementById("noteContains").value;
+
+              let url = BASE_URL + "/transactions?page=" + page + "&size=" + encodeURIComponent(size);
+              if (from) url += "&from=" + encodeURIComponent(new Date(from).toISOString());
+              if (to) url += "&to=" + encodeURIComponent(new Date(to).toISOString());
+              if (counterparty) url += "&counterparty=" + encodeURIComponent(counterparty);
+              if (noteContains) url += "&noteContains=" + encodeURIComponent(noteContains);
+
+              const list = document.getElementById("list");
+              list.innerHTML = '<div class="empty">Loading...</div>';
+              let response;
+              try {
+                response = await fetch(url, { headers: token ? { Authorization: "Bearer " + token } : {} });
+              } catch (e) {
+                list.innerHTML = '<div class="empty">Request failed: ' + escapeHtml(e.message) + '</div>';
+                return;
+              }
+              if (!response.ok) {
+                const text = await response.text();
+                list.innerHTML = '<div class="empty">' + escapeHtml(text || ("HTTP Error: " + response.status)) + '</div>';
+                return;
+              }
+              const data = await response.json();
+              page = data.page;
+
+              const totalPages = Math.max(data.totalPages, 1);
+              document.getElementById("pageLabel").textContent = "Page " + (data.page + 1) + " of " + totalPages;
+              document.getElementById("prevBtn").disabled = data.page <= 0;
+              document.getElementById("nextBtn").disabled = data.page + 1 >= totalPages;
+
+              list.innerHTML = data.content && data.content.length
+                ? data.content.map(renderRow).join("")
+                : '<div class="empty">No transactions found.</div>';
+            }
+
+            document.getElementById("applyBtn").addEventListener("click", () => load(0 - page));
+            document.getElementById("prevBtn").addEventListener("click", () => load(-1));
+            document.getElementById("nextBtn").addEventListener("click", () => load(1));
+            load();
+          <\/script>
+        </body>
+        </html>
+      `);
+      win.document.close();
     }
 
     function formatDate(iso) {
