@@ -414,13 +414,15 @@ public class PhonepeService {
         return t.getPhno() == viewer || t.getStatus() == null || t.getStatus() == TransactionStatus.COMPLETED;
     }
 
-    private static void requireValidPhone(long phno) {
+    // Package-private (not private): UpiCollectRequestService reuses this instead of duplicating the same check.
+    static void requireValidPhone(long phno) {
         if (phno < 6000000000L || phno > 9999999999L) {
             throw new InvalidRequestException("Invalid mobile number");
         }
     }
 
-    private static BigDecimal requireValidAmount(BigDecimal amount) {
+    // Package-private (not private): UpiCollectRequestService reuses this instead of duplicating the same check.
+    static BigDecimal requireValidAmount(BigDecimal amount) {
         if (amount == null || amount.signum() <= 0) {
             throw new InvalidRequestException("Amount too low");
         }

@@ -28,6 +28,12 @@ public class GlobalExceptionHandler {
         return reply(HttpStatus.UNAUTHORIZED, e.getMessage());
     }
 
+    // a merchant-only endpoint (e.g. creating a UPI collect request) called without a valid X-Service-Key
+    @ExceptionHandler(InvalidServiceKeyException.class)
+    public ResponseEntity<String> handleInvalidServiceKey(InvalidServiceKeyException e) {
+        return reply(HttpStatus.UNAUTHORIZED, e.getMessage());
+    }
+
     @ExceptionHandler(UserNotExistException.class)
     public ResponseEntity<String> handleUserNotExist(UserNotExistException e) {
         return reply(HttpStatus.NOT_FOUND, e.getMessage());
@@ -61,6 +67,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(RecurringPaymentNotFoundException.class)
     public ResponseEntity<String> handleRecurringPaymentNotFound(RecurringPaymentNotFoundException e) {
+        return reply(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
+    @ExceptionHandler(UpiCollectRequestNotFoundException.class)
+    public ResponseEntity<String> handleUpiCollectRequestNotFound(UpiCollectRequestNotFoundException e) {
         return reply(HttpStatus.NOT_FOUND, e.getMessage());
     }
 
