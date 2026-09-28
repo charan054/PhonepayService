@@ -23,17 +23,20 @@ public class WebConfig implements WebMvcConfigurer {
     private final Clock clock;
     private final int maxLoginAttemptsPerAddress;
     private final int maxSendMoneyAttemptsPerAccount;
+    private final String serviceApiKey;
 
     public WebConfig(SessionService sessions,
                      Clock clock,
                      @Value("${phonepe.login.rate-limit.max-attempts:" + DEFAULT_MAX_LOGIN_ATTEMPTS_PER_ADDRESS + "}")
                      int maxLoginAttemptsPerAddress,
                      @Value("${phonepe.sendmoney.rate-limit.max-attempts:" + DEFAULT_MAX_SENDMONEY_ATTEMPTS_PER_ACCOUNT + "}")
-                     int maxSendMoneyAttemptsPerAccount) {
+                     int maxSendMoneyAttemptsPerAccount,
+                     @Value("${internal.service.api-key}") String serviceApiKey) {
         this.sessions = sessions;
         this.clock = clock;
         this.maxLoginAttemptsPerAddress = maxLoginAttemptsPerAddress;
         this.maxSendMoneyAttemptsPerAccount = maxSendMoneyAttemptsPerAccount;
+        this.serviceApiKey = serviceApiKey;
     }
 
     @Override
@@ -45,9 +48,16 @@ public class WebConfig implements WebMvcConfigurer {
                         "Too many login attempts from this address. Please wait a minute and try again."))
                 .addPathPatterns("/phonepe/login");
 
+        // Merchant-only (e.g. OrderService creating/checking a UPI collect request on a buyer's behalf) - gated
+        // by the shared internal service key instead of a buyer's own Bearer session, since the merchant never
+        // has one. Registered BEFORE AuthInterceptor's exclusion below is checked, so these paths never fall
+        // through to requiring a Bearer token either.
+        registry.addInterceptor(new ServiceKeyInterceptor(serviceApiKey))
+                .addPathPatterns("/phonepe/upi/collect/**");
+
         registry.addInterceptor(new AuthInterceptor(sessions))
                 .addPathPatterns("/phonepe/**")
-                .excludePathPatterns("/phonepe/login");   // the only endpoint you can call without being logged in
+                .excludePathPatterns("/phonepe/login", "/phonepe/upi/collect/**");
 
         // Rate-limited per authenticated account (registered AFTER AuthInterceptor, so the phno attribute it sets
         // is already there): protects against a compromised or scripted client hammering either way of moving
