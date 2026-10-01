@@ -457,6 +457,28 @@
             <input type="number" id="loginPhno" placeholder="Enter phone number">
             <input type="password" id="loginPin" placeholder="PIN">
             <button class="purple" onclick="loginUser()">Login User</button>
+            <p style="margin-top:12px; text-align:center;"><a href="#" onclick="showForgotPin(); return false;">Forgot PIN?</a></p>
+        </div>
+    </section>
+
+    <section class="login-wrap" id="forgotPinSection" style="display:none">
+        <div class="card login-card">
+            <div class="card-title">
+                <div class="icon">🔑</div>
+                <h2>Forgot PIN</h2>
+                <span class="method">POST</span>
+            </div>
+            <p>Enter your phone number and we'll email a 6-digit code to the address on file for that account
+               (set via Bankapplication's bank.html, if you haven't already).</p>
+            <input type="number" id="forgotPinPhno" placeholder="Enter phone number">
+            <button class="purple" onclick="requestPinReset()">Send Reset Code</button>
+
+            <div id="resetPinStep" style="display:none; margin-top:16px;">
+                <input type="text" id="resetPinOtp" placeholder="6-digit code" maxlength="6">
+                <input type="password" id="resetPinNewPin" placeholder="New PIN (4-6 digits)">
+                <button class="purple" onclick="submitPinReset()">Reset PIN</button>
+            </div>
+            <p style="margin-top:12px; text-align:center;"><a href="#" onclick="backToLogin(); return false;">Back to Login</a></p>
         </div>
     </section>
 
@@ -868,6 +890,50 @@
         showStatus(`Logged in as ${data.name}.`, "success");
       } catch (error) {
         // apiCall already showed the reason in the toast; stay on the login page, nothing else to do
+      }
+    }
+
+    function showForgotPin() {
+      document.getElementById("loginSection").style.display = "none";
+      document.getElementById("forgotPinSection").style.display = "flex";
+      document.getElementById("resetPinStep").style.display = "none";
+      document.getElementById("forgotPinPhno").value = document.getElementById("loginPhno").value || "";
+    }
+
+    function backToLogin() {
+      document.getElementById("forgotPinSection").style.display = "none";
+      document.getElementById("loginSection").style.display = "flex";
+    }
+
+    async function requestPinReset() {
+      const phno = document.getElementById("forgotPinPhno").value;
+      if (!phno) return showStatus("Please enter a phone number.", "error");
+
+      try {
+        await apiCall(`${BASE_URL}/forgotpin/request`, jsonRequest("POST", { phno: Number(phno) }), { showErrorTab: false });
+        document.getElementById("resetPinStep").style.display = "block";
+        // Always the same message regardless of whether the account/email actually exists - the bank is
+        // deliberately silent about that (see Bankapplication's PinResetService), so this page can't reveal it either.
+        showStatus("If that account has an email on file, a reset code has been sent to it.", "success");
+      } catch (error) {
+        // apiCall already showed the reason in the toast
+      }
+    }
+
+    async function submitPinReset() {
+      const phno = document.getElementById("forgotPinPhno").value;
+      const otp = document.getElementById("resetPinOtp").value;
+      const newPin = document.getElementById("resetPinNewPin").value;
+      if (!phno || !otp || !newPin) return showStatus("Please enter the code and a new PIN.", "error");
+
+      try {
+        await apiCall(`${BASE_URL}/forgotpin/reset`, jsonRequest("POST", { phno: Number(phno), otp, newPin }), { showErrorTab: false });
+        document.getElementById("resetPinOtp").value = "";
+        document.getElementById("resetPinNewPin").value = "";
+        showStatus("PIN reset. You can now log in with your new PIN.", "success");
+        backToLogin();
+      } catch (error) {
+        // apiCall already showed the reason in the toast
       }
     }
 

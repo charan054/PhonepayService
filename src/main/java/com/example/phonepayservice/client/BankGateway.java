@@ -1,7 +1,9 @@
 package com.example.phonepayservice.client;
 
+import com.example.phonepayservice.dto.BankForgotPinRequest;
 import com.example.phonepayservice.dto.BankLoginRequest;
 import com.example.phonepayservice.dto.BankLoginResult;
+import com.example.phonepayservice.dto.BankResetPinRequest;
 import com.example.phonepayservice.dto.BankTransferRequest;
 import com.example.phonepayservice.dto.BankUser;
 import com.example.phonepayservice.exception.AccountLockedException;
@@ -57,6 +59,28 @@ public class BankGateway {
             throw new BankUnavailableException("The bank service is unavailable. Please try again later.", e);
         } catch (RetryableException e) {
             throw new BankUnavailableException("The bank service is unavailable. Please try again later.", e);
+        } catch (FeignException e) {
+            throw new BankUnavailableException("The bank service is unavailable. Please try again later.", e);
+        }
+    }
+
+    /** Always succeeds from the caller's point of view - the bank itself is deliberately silent about whether
+     *  the phone number has an account or an email on file (see Bankapplication's PinResetService), so any
+     *  transport failure here is the only thing left to report, and even that just means "try again later". */
+    public void forgotPinRequest(long phno) {
+        try {
+            bank.forgotPinRequest(new BankForgotPinRequest(phno));
+        } catch (FeignException e) {
+            throw new BankUnavailableException("The bank service is unavailable. Please try again later.", e);
+        }
+    }
+
+    /** The bank IS the source of truth for the code and the PIN, so a wrong/expired code must fail here. */
+    public void forgotPinReset(long phno, String otp, String newPin) {
+        try {
+            bank.forgotPinReset(new BankResetPinRequest(phno, otp, newPin));
+        } catch (FeignException.Unauthorized e) {
+            throw new InvalidCredentialsException(orDefault(e.contentUTF8(), "Invalid or expired code."));
         } catch (FeignException e) {
             throw new BankUnavailableException("The bank service is unavailable. Please try again later.", e);
         }

@@ -1,7 +1,9 @@
 package com.example.phonepayservice.client;
 
+import com.example.phonepayservice.dto.BankForgotPinRequest;
 import com.example.phonepayservice.dto.BankLoginRequest;
 import com.example.phonepayservice.dto.BankLoginResult;
+import com.example.phonepayservice.dto.BankResetPinRequest;
 import com.example.phonepayservice.dto.BankTransferRequest;
 import com.example.phonepayservice.dto.BankUser;
 import org.springframework.cloud.openfeign.FeignClient;
@@ -21,6 +23,14 @@ import java.math.BigDecimal;
 public interface BankClient {
     @PostMapping("/bank/login")
     BankLoginResult login(@RequestBody BankLoginRequest request);
+
+    // Both public on the bank's side (no X-Service-Key), same reasoning as login: the request itself carries
+    // whatever proof of identity it needs (a code emailed by the bank, for reset), not this service's own key.
+    @PostMapping("/bank/forgotpin/request")
+    void forgotPinRequest(@RequestBody BankForgotPinRequest request);
+
+    @PostMapping("/bank/forgotpin/reset")
+    void forgotPinReset(@RequestBody BankResetPinRequest request);
 
     // the bank's small summary of a user (name, account number, balance), not the full record with every transaction
     @GetMapping("/bank/displayuser")
