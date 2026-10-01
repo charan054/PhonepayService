@@ -80,6 +80,18 @@ public class PhonepeService {
         sessions.end(token);
     }
 
+    // The bank itself decides whether to actually send anything (see Bankapplication's PinResetService) - this
+    // is a pure proxy, since a browser at this service's own origin has no way to call the bank's API directly.
+    public void forgotPinRequest(long phno) {
+        requireValidPhone(phno);
+        bank.forgotPinRequest(phno);
+    }
+
+    public void resetPin(long phno, String otp, String newPin) {
+        requireValidPhone(phno);
+        bank.forgotPinReset(phno, otp, newPin);
+    }
+
     // ---------- account ----------
 
     public ProfileResponse profile(long phno) {

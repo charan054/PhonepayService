@@ -48,6 +48,14 @@ public class WebConfig implements WebMvcConfigurer {
                         "Too many login attempts from this address. Please wait a minute and try again."))
                 .addPathPatterns("/phonepe/login");
 
+        // Public, same reasoning as login: it's the bank's own public endpoint behind this proxy, and the bank
+        // itself gates reset on the emailed code - this rate limit just stops one address from spamming requests.
+        registry.addInterceptor(new RateLimitInterceptor(
+                        new RateLimiter(maxLoginAttemptsPerAddress, RATE_WINDOW, clock),
+                        HttpServletRequest::getRemoteAddr,
+                        "Too many attempts from this address. Please wait a minute and try again."))
+                .addPathPatterns("/phonepe/forgotpin/request");
+
         // Merchant-only (e.g. OrderService creating/checking a UPI collect request on a buyer's behalf) - gated
         // by the shared internal service key instead of a buyer's own Bearer session, since the merchant never
         // has one. Registered BEFORE AuthInterceptor's exclusion below is checked, so these paths never fall
@@ -60,7 +68,8 @@ public class WebConfig implements WebMvcConfigurer {
 
         registry.addInterceptor(new AuthInterceptor(sessions))
                 .addPathPatterns("/phonepe/**")
-                .excludePathPatterns("/phonepe/login", "/phonepe/upi/collect", "/phonepe/upi/collect/**");
+                .excludePathPatterns("/phonepe/login", "/phonepe/upi/collect", "/phonepe/upi/collect/**",
+                        "/phonepe/forgotpin/request", "/phonepe/forgotpin/reset");
 
         // Rate-limited per authenticated account (registered AFTER AuthInterceptor, so the phno attribute it sets
         // is already there): protects against a compromised or scripted client hammering either way of moving

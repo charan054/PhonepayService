@@ -4,8 +4,10 @@ import com.example.phonepayservice.configuration.AuthInterceptor;
 import com.example.phonepayservice.dto.BalanceResponse;
 import com.example.phonepayservice.dto.CreateMoneyRequestRequest;
 import com.example.phonepayservice.dto.CreateRecurringPaymentRequest;
+import com.example.phonepayservice.dto.ForgotPinRequest;
 import com.example.phonepayservice.dto.LoginRequest;
 import com.example.phonepayservice.dto.LoginResponse;
+import com.example.phonepayservice.dto.ResetPinRequest;
 import com.example.phonepayservice.dto.MoneyRequestResponse;
 import com.example.phonepayservice.dto.MonthlySummaryResponse;
 import com.example.phonepayservice.dto.PageResponse;
@@ -61,6 +63,20 @@ public class PhonepeController {
     @PostMapping("/login")
     public LoginResponse login(@Valid @RequestBody LoginRequest request) {
         return phonepeService.login(request.phno(), request.pin());
+    }
+
+    // Pure proxy to the bank (see PhonepeService.forgotPinRequest) - a browser at this service's own origin
+    // can't call Bankapplication directly.
+    @PostMapping("/forgotpin/request")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void forgotPinRequest(@Valid @RequestBody ForgotPinRequest request) {
+        phonepeService.forgotPinRequest(request.phno());
+    }
+
+    @PostMapping("/forgotpin/reset")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void forgotPinReset(@Valid @RequestBody ResetPinRequest request) {
+        phonepeService.resetPin(request.phno(), request.otp(), request.newPin());
     }
 
     @PostMapping("/logout")
