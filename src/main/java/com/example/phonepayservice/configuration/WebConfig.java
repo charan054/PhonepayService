@@ -51,13 +51,16 @@ public class WebConfig implements WebMvcConfigurer {
         // Merchant-only (e.g. OrderService creating/checking a UPI collect request on a buyer's behalf) - gated
         // by the shared internal service key instead of a buyer's own Bearer session, since the merchant never
         // has one. Registered BEFORE AuthInterceptor's exclusion below is checked, so these paths never fall
-        // through to requiring a Bearer token either.
+        // through to requiring a Bearer token either. Both "/phonepe/upi/collect" (POST, no trailing segment)
+        // AND "/phonepe/upi/collect/**" (GET .../{merchantReference}) are listed - "/**" alone does not match the
+        // bare path with no trailing slash, which silently left the POST endpoint unguarded by this interceptor
+        // and falling through to AuthInterceptor's Bearer-token check instead (a merchant call has no such token).
         registry.addInterceptor(new ServiceKeyInterceptor(serviceApiKey))
-                .addPathPatterns("/phonepe/upi/collect/**");
+                .addPathPatterns("/phonepe/upi/collect", "/phonepe/upi/collect/**");
 
         registry.addInterceptor(new AuthInterceptor(sessions))
                 .addPathPatterns("/phonepe/**")
-                .excludePathPatterns("/phonepe/login", "/phonepe/upi/collect/**");
+                .excludePathPatterns("/phonepe/login", "/phonepe/upi/collect", "/phonepe/upi/collect/**");
 
         // Rate-limited per authenticated account (registered AFTER AuthInterceptor, so the phno attribute it sets
         // is already there): protects against a compromised or scripted client hammering either way of moving
