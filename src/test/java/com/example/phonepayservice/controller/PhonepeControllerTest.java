@@ -654,7 +654,7 @@ class PhonepeControllerTest {
 
     @Test
     void refund_success() throws Exception {
-        when(phonepeService.refund(eq(CALLER), eq(100000L), isNull())).thenReturn(refundTransaction(100001, 100000));
+        when(phonepeService.refund(eq(CALLER), eq(100000L), isNull(), isNull())).thenReturn(refundTransaction(100001, 100000));
 
         mockMvc.perform(asCaller(post("/phonepe/transactions/100000/refund")))
                 .andExpect(status().isOk())
@@ -665,25 +665,44 @@ class PhonepeControllerTest {
 
     @Test
     void refund_withNoRequestBody_isTreatedAsNoIdempotencyKey() throws Exception {
-        when(phonepeService.refund(eq(CALLER), eq(100000L), isNull())).thenReturn(refundTransaction(100001, 100000));
+        when(phonepeService.refund(eq(CALLER), eq(100000L), isNull(), isNull())).thenReturn(refundTransaction(100001, 100000));
 
         mockMvc.perform(asCaller(post("/phonepe/transactions/100000/refund"))).andExpect(status().isOk());
     }
 
     @Test
     void refund_passesTheIdempotencyKeyThrough() throws Exception {
-        when(phonepeService.refund(CALLER, 100000L, "refund-key")).thenReturn(refundTransaction(100001, 100000));
+        when(phonepeService.refund(CALLER, 100000L, null, "refund-key")).thenReturn(refundTransaction(100001, 100000));
 
         mockMvc.perform(asCaller(post("/phonepe/transactions/100000/refund")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"idempotencyKey\":\"refund-key\"}"))
                 .andExpect(status().isOk());
 
-        verify(phonepeService).refund(CALLER, 100000L, "refund-key");
+        verify(phonepeService).refund(CALLER, 100000L, null, "refund-key");
+    }
+
+    @Test
+    void refund_passesAPartialAmountThrough() throws Exception {
+        when(phonepeService.refund(CALLER, 100000L, new BigDecimal("40.50"), null)).thenReturn(refundTransaction(100001, 100000));
+
+        mockMvc.perform(asCaller(post("/phonepe/transactions/100000/refund")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\":40.50}"))
+                .andExpect(status().isOk());
+
+        verify(phonepeService).refund(CALLER, 100000L, new BigDecimal("40.50"), null);
+    }
+
+    @Test
+    void refund_withAZeroAmount_isRejectedByValidation() throws Exception {
+        mockMvc.perform(asCaller(post("/phonepe/transactions/100000/refund")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\":0}"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(phonepeService);
     }
 
     @Test
     void refund_ofSomeoneElsesOrUnknownTransaction_returns404() throws Exception {
-        when(phonepeService.refund(eq(CALLER), eq(100000L), any())).thenThrow(new TransactionNotFoundException("Transaction not found"));
+        when(phonepeService.refund(eq(CALLER), eq(100000L), any(), any())).thenThrow(new TransactionNotFoundException("Transaction not found"));
 
         mockMvc.perform(asCaller(post("/phonepe/transactions/100000/refund")))
                 .andExpect(status().isNotFound())
@@ -692,7 +711,7 @@ class PhonepeControllerTest {
 
     @Test
     void refund_ofAnIneligibleTransaction_returns400() throws Exception {
-        when(phonepeService.refund(eq(CALLER), eq(100000L), any()))
+        when(phonepeService.refund(eq(CALLER), eq(100000L), any(), any()))
                 .thenThrow(new InvalidRequestException("Only a payment can be refunded"));
 
         mockMvc.perform(asCaller(post("/phonepe/transactions/100000/refund")))

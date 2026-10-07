@@ -3,7 +3,9 @@ package com.example.phonepayservice.repository;
 import com.example.phonepayservice.entity.Transaction;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -16,7 +18,16 @@ import java.util.Optional;
 public interface TransactionRepository extends JpaRepository<Transaction, Long> {
     Optional<Transaction> findByTransactionId(long transactionId);
     Optional<Transaction> findByPhnoAndIdempotencyKey(long phno, String idempotencyKey);
-    Optional<Transaction> findByRefundOfTransactionId(long transactionId);
+    // Takes a row lock on the original payment for the rest of the caller's transaction, so concurrent refunds
+    // of the same payment run one at a time - see PhonepeService.reserveRefund().
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select t from Transaction t where t.transactionId = :transactionId")
+    Optional<Transaction> lockByTransactionId(@Param("transactionId") long transactionId);
+    // Everything already refunded (or still being refunded) against a payment. PENDING and NEEDS_RECONCILIATION
+    // count too - the money may have moved - only a FAILED refund is known not to have.
+    @Query("select coalesce(sum(t.amount), 0) from Transaction t where t.refundOfTransactionId = :transactionId "
+            + "and t.status <> com.example.phonepayservice.entity.TransactionStatus.FAILED")
+    BigDecimal sumRefundedAmount(@Param("transactionId") long transactionId);
     // Everything a person paid, plus completed payments they received - a pending/failed/needs-reconciliation
     // payment is hidden from its receiver, since the money never reliably reached them (see PhonepeService).
     // from/to/counterparty/noteContains are all optional: the (:x IS NULL OR ...) form lets one query serve

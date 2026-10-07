@@ -37,6 +37,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
@@ -107,14 +108,16 @@ public class PhonepeController {
         return TransactionResponse.from(phonepeService.makePayment(caller, request.amount(), request.note(), request.idempotencyKey()), caller);
     }
 
-    // Full refund only, and only of a completed makepayment (not a P2P sendMoney - ask for that back with a
-    // MoneyRequest instead). request may be omitted entirely when no idempotency key is needed.
+    // Only of a completed makepayment (not a P2P sendMoney - ask for that back with a MoneyRequest instead). Full
+    // by default, or partial when request.amount is given; several partial refunds may follow each other up to
+    // the payment's total. request may be omitted entirely (no idempotency key, full remaining amount).
     @PostMapping("/transactions/{transactionId}/refund")
     public TransactionResponse refund(@RequestAttribute(AuthInterceptor.AUTHENTICATED_PHNO) long caller,
                                       @PathVariable long transactionId,
                                       @RequestBody(required = false) @Valid RefundRequest request) {
         String idempotencyKey = request == null ? null : request.idempotencyKey();
-        return TransactionResponse.from(phonepeService.refund(caller, transactionId, idempotencyKey), caller);
+        BigDecimal amount = request == null ? null : request.amount();
+        return TransactionResponse.from(phonepeService.refund(caller, transactionId, amount, idempotencyKey), caller);
     }
 
     @GetMapping("/transactions")

@@ -9,7 +9,8 @@ import java.time.Instant;
 @Entity
 @Table(name="transaction", indexes = {
         @Index(name = "idx_transaction_phno", columnList = "phno"),
-        @Index(name = "idx_transaction_recieverno", columnList = "recieverno")
+        @Index(name = "idx_transaction_recieverno", columnList = "recieverno"),
+        @Index(name = "idx_transaction_refund_of", columnList = "refund_of_transaction_id")
 }, uniqueConstraints = @UniqueConstraint(name = "uq_transaction_phno_idempotency_key", columnNames = {"phno", "idempotency_key"}))
 @Data
 public class Transaction {
@@ -45,9 +46,9 @@ public class Transaction {
     // caller didn't supply one - such a request gets no retry protection, exactly as before this field existed.
     @Column(name = "idempotency_key")
     private String idempotencyKey;
-    // Set only on a "Refund" row: the transactionId of the Payment it reverses. The unique index means at most
-    // one refund row can ever reference a given original transaction - MySQL/InnoDB treats multiple NULLs here
-    // (every non-refund row) as distinct, so it never blocks ordinary payments from coexisting.
-    @Column(name = "refund_of_transaction_id", unique = true)
+    // Set only on a "Refund" row: the transactionId of the Payment it (partly or fully) reverses. A payment may
+    // have several refund rows; PhonepeService.refund() guarantees under a row lock on the original payment that
+    // their non-failed amounts never add up to more than it was for.
+    @Column(name = "refund_of_transaction_id")
     private Long refundOfTransactionId;
 }

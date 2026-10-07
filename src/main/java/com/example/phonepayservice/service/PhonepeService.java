@@ -23,6 +23,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -58,12 +60,17 @@ public class PhonepeService {
     private final SessionService sessions;
     private final TransactionRepository transactions;
     private final Clock clock;
+    // Only for the short refund-reservation step (see reserveRefund) - the money movement itself stays outside
+    // any database transaction, per the class comment above.
+    private final TransactionTemplate tx;
 
-    public PhonepeService(BankGateway bank, SessionService sessions, TransactionRepository transactions, Clock clock) {
+    public PhonepeService(BankGateway bank, SessionService sessions, TransactionRepository transactions, Clock clock,
+                          PlatformTransactionManager transactionManager) {
         this.bank = bank;
         this.sessions = sessions;
         this.transactions = transactions;
         this.clock = clock;
+        this.tx = new TransactionTemplate(transactionManager);
     }
 
     // ---------- login ----------
@@ -150,21 +157,28 @@ public class PhonepeService {
         return settle(t, TransactionStatus.COMPLETED, null);
     }
 
-    /**
-     * Reverses a completed makepayment, in full, back to the same account it debited. Only the payer of that
-     * exact payment can refund it (transaction() below enforces this the same way viewing one does), only a
-     * completed "Payment" can be refunded (not a P2P transfer - see MoneyRequestService for asking a person for
-     * their money back instead), and only once (the unique index on refundOfTransactionId is the real
-     * guarantee; the findByRefundOfTransactionId check here just gives a clean error instead of a raw
-     * constraint violation on the common path).
-     */
     public Transaction refund(long payer, long originalTransactionId, String idempotencyKey) {
+        return refund(payer, originalTransactionId, null, idempotencyKey);
+    }
+
+    /**
+     * Reverses all or part of a completed makepayment back to the same account it debited. Only the payer of that
+     * exact payment can refund it (transaction() below enforces this the same way viewing one does), and only a
+     * completed "Payment" can be refunded (not a P2P transfer - see MoneyRequestService for asking a person for
+     * their money back instead). amount null means everything still refundable; several partial refunds may
+     * follow each other, but their total can never exceed the payment - see reserveRefund for how that holds
+     * under concurrency.
+     */
+    public Transaction refund(long payer, long originalTransactionId, BigDecimal amount, String idempotencyKey) {
         String key = normalizeKey(idempotencyKey);
         if (key != null) {
             Transaction existing = transactions.findByPhnoAndIdempotencyKey(payer, key).orElse(null);
             if (existing != null) {
-                return matchingRefundOrThrow(existing, originalTransactionId);
+                return matchingRefundOrThrow(existing, originalTransactionId, amount);
             }
+        }
+        if (amount != null && amount.signum() <= 0) {
+            throw new InvalidRequestException("Refund amount must be more than zero");
         }
         Transaction original = transaction(payer, originalTransactionId);
         if (!"Payment".equals(original.getMode())) {
@@ -173,18 +187,62 @@ public class PhonepeService {
         if (original.getStatus() != TransactionStatus.COMPLETED) {
             throw new InvalidRequestException("Only a completed payment can be refunded");
         }
-        if (transactions.findByRefundOfTransactionId(originalTransactionId).isPresent()) {
-            throw new InvalidRequestException("This payment has already been refunded");
-        }
 
-        RecordOutcome outcome = record(payer, null, original.getAmount(), "Refund",
-                "Refund for transaction " + originalTransactionId, key, originalTransactionId);
+        RecordOutcome outcome = reserveRefund(payer, original, amount, key);
         if (!outcome.isNew()) {
-            return matchingRefundOrThrow(outcome.transaction(), originalTransactionId);
+            return matchingRefundOrThrow(outcome.transaction(), originalTransactionId, amount);
         }
         Transaction t = outcome.transaction();
-        credit(t, payer, original.getAmount());
+        credit(t, payer, t.getAmount());
         return settle(t, TransactionStatus.COMPLETED, null);
+    }
+
+    /**
+     * Writes the PENDING refund row in one short database transaction that first locks the original payment's
+     * row. Every refund of the same payment goes through that lock, so "how much is still refundable" can't be
+     * read by two requests at once and both be paid out - this replaces the unique index that used to limit a
+     * payment to a single (full) refund. The bank is only called after this commits, as for every other payment.
+     */
+    private RecordOutcome reserveRefund(long payer, Transaction original, BigDecimal requested, String key) {
+        long originalId = original.getTransactionId();
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return tx.execute(status -> {
+                    transactions.lockByTransactionId(originalId);
+                    // A same-key retry that raced us here is now visible: hand back its row instead of a second refund.
+                    if (key != null) {
+                        Transaction existing = transactions.findByPhnoAndIdempotencyKey(payer, key).orElse(null);
+                        if (existing != null) {
+                            return new RecordOutcome(existing, false);
+                        }
+                    }
+                    BigDecimal remaining = original.getAmount().subtract(transactions.sumRefundedAmount(originalId));
+                    if (remaining.signum() <= 0) {
+                        throw new InvalidRequestException("This payment has already been refunded");
+                    }
+                    BigDecimal amount = requested == null ? remaining : requested;
+                    if (amount.compareTo(remaining) > 0) {
+                        throw new InvalidRequestException("Refund amount is more than what is left to refund on this payment ("
+                                + remaining.setScale(2, RoundingMode.HALF_UP) + ")");
+                    }
+                    Transaction t = pendingRow(payer, null, amount, "Refund",
+                            "Refund for transaction " + originalId, key, originalId);
+                    return new RecordOutcome(transactions.saveAndFlush(t), true);
+                });
+            } catch (DataIntegrityViolationException e) {
+                // A transactionId collision with some other concurrent insert (the whole reservation rolled back,
+                // so just retry it), or - with a key - a concurrent same-key request for a different payment.
+                if (key != null) {
+                    Transaction existing = transactions.findByPhnoAndIdempotencyKey(payer, key).orElse(null);
+                    if (existing != null) {
+                        return new RecordOutcome(existing, false);
+                    }
+                }
+                if (attempt >= MAX_ID_ATTEMPTS) {
+                    throw e;
+                }
+            }
+        }
     }
 
     // ---------- history ----------
@@ -259,7 +317,7 @@ public class PhonepeService {
         } catch (BankOutcomeUnknownException e) {
             // The deposit may or may not have happened - leave this NEEDS_RECONCILIATION rather than guess,
             // same as an unresolved debit. The original payment is untouched either way: it stays COMPLETED,
-            // and the unique index on refundOfTransactionId still stops a second refund attempt from here on.
+            // and this row's amount still counts as refunded (sumRefundedAmount), so it can't be paid out twice.
             unresolved(t, "Deposit not confirmed by the bank: " + e.getMessage());
             throw new TransferFailedException("We could not confirm your refund with the bank. Check your balance and "
                     + "transactions before trying again. Reference: " + t.getTransactionId());
@@ -327,17 +385,7 @@ public class PhonepeService {
     private RecordOutcome record(long payer, Long receiver, BigDecimal amount, String mode, String note,
                                   String idempotencyKey, Long refundOfTransactionId) {
         for (int attempt = 1; ; attempt++) {
-            Transaction t = new Transaction();
-            t.setTransactionId(nextTransactionId());
-            t.setPhno(payer);
-            t.setReceiverPhno(receiver);
-            t.setAmount(amount);
-            t.setMode(mode);
-            t.setStatus(TransactionStatus.PENDING);
-            t.setCreatedAt(clock.instant());
-            t.setNote(note == null || note.isBlank() ? null : note.trim());
-            t.setIdempotencyKey(idempotencyKey);
-            t.setRefundOfTransactionId(refundOfTransactionId);
+            Transaction t = pendingRow(payer, receiver, amount, mode, note, idempotencyKey, refundOfTransactionId);
             try {
                 return new RecordOutcome(transactions.saveAndFlush(t), true);
             } catch (DataIntegrityViolationException e) {
@@ -357,6 +405,22 @@ public class PhonepeService {
         }
     }
 
+    private Transaction pendingRow(long payer, Long receiver, BigDecimal amount, String mode, String note,
+                                   String idempotencyKey, Long refundOfTransactionId) {
+        Transaction t = new Transaction();
+        t.setTransactionId(nextTransactionId());
+        t.setPhno(payer);
+        t.setReceiverPhno(receiver);
+        t.setAmount(amount);
+        t.setMode(mode);
+        t.setStatus(TransactionStatus.PENDING);
+        t.setCreatedAt(clock.instant());
+        t.setNote(note == null || note.isBlank() ? null : note.trim());
+        t.setIdempotencyKey(idempotencyKey);
+        t.setRefundOfTransactionId(refundOfTransactionId);
+        return t;
+    }
+
     private static String normalizeKey(String idempotencyKey) {
         return idempotencyKey == null || idempotencyKey.isBlank() ? null : idempotencyKey.trim();
     }
@@ -371,8 +435,10 @@ public class PhonepeService {
         return existing;
     }
 
-    private Transaction matchingRefundOrThrow(Transaction existing, long expectedOriginalTransactionId) {
-        if (!Objects.equals(existing.getRefundOfTransactionId(), expectedOriginalTransactionId)) {
+    // expectedAmount null (a "refund whatever is left" request) can't be compared - same original is enough then.
+    private Transaction matchingRefundOrThrow(Transaction existing, long expectedOriginalTransactionId, BigDecimal expectedAmount) {
+        boolean amountMatches = expectedAmount == null || existing.getAmount().compareTo(expectedAmount) == 0;
+        if (!Objects.equals(existing.getRefundOfTransactionId(), expectedOriginalTransactionId) || !amountMatches) {
             throw new InvalidRequestException("This idempotency key was already used for a different request.");
         }
         return existing;
