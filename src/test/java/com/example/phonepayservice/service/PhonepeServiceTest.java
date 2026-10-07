@@ -23,6 +23,7 @@ import com.example.phonepayservice.exception.UserNotExistException;
 import com.example.phonepayservice.repository.TransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -55,6 +56,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -81,7 +83,9 @@ class PhonepeServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PhonepeService(bank, sessions, transactions, Clock.fixed(NOW, ZoneOffset.UTC));
+        // A mock transaction manager: TransactionTemplate just runs the refund-reservation callback inline.
+        service = new PhonepeService(bank, sessions, transactions, Clock.fixed(NOW, ZoneOffset.UTC),
+                mock(PlatformTransactionManager.class));
         lenient().doAnswer(inv -> {
             Transaction t = inv.getArgument(0);
             writes.add(t.getStatus());
@@ -829,7 +833,7 @@ class PhonepeServiceTest {
     @Test
     void refund_creditsTheOriginalAmountBackAndRecordsARefundRow() {
         when(transactions.findByTransactionId(100000)).thenReturn(Optional.of(payment(100000, PAYER, TransactionStatus.COMPLETED)));
-        when(transactions.findByRefundOfTransactionId(100000)).thenReturn(Optional.empty());
+        when(transactions.sumRefundedAmount(100000)).thenReturn(BigDecimal.ZERO);
 
         Transaction t = service.refund(PAYER, 100000, null);
 
@@ -870,9 +874,7 @@ class PhonepeServiceTest {
     @Test
     void refund_ofAnAlreadyRefundedPayment_isRejected() {
         when(transactions.findByTransactionId(100000)).thenReturn(Optional.of(payment(100000, PAYER, TransactionStatus.COMPLETED)));
-        Transaction priorRefund = new Transaction();
-        priorRefund.setRefundOfTransactionId(100000L);
-        when(transactions.findByRefundOfTransactionId(100000)).thenReturn(Optional.of(priorRefund));
+        when(transactions.sumRefundedAmount(100000)).thenReturn(AMOUNT);
 
         InvalidRequestException ex = assertThrows(InvalidRequestException.class, () -> service.refund(PAYER, 100000, null));
 
@@ -911,12 +913,114 @@ class PhonepeServiceTest {
     void refund_bankOutcomeUnknown_needsAPerson_andLeavesTheOriginalPaymentCompleted() {
         Transaction original = payment(100000, PAYER, TransactionStatus.COMPLETED);
         when(transactions.findByTransactionId(100000)).thenReturn(Optional.of(original));
-        when(transactions.findByRefundOfTransactionId(100000)).thenReturn(Optional.empty());
+        when(transactions.sumRefundedAmount(100000)).thenReturn(BigDecimal.ZERO);
         doThrow(new BankOutcomeUnknownException("timeout", null)).when(bank).deposit(eq(PAYER), any());
 
         assertThrows(TransferFailedException.class, () -> service.refund(PAYER, 100000, null));
 
         assertEquals(List.of(TransactionStatus.PENDING, TransactionStatus.NEEDS_RECONCILIATION), writes);
         assertEquals(TransactionStatus.COMPLETED, original.getStatus());
+    }
+
+    // ============ partial refunds ============
+
+    @Test
+    void refund_partialAmount_creditsOnlyThatMuch() {
+        when(transactions.findByTransactionId(100000)).thenReturn(Optional.of(payment(100000, PAYER, TransactionStatus.COMPLETED)));
+        when(transactions.sumRefundedAmount(100000)).thenReturn(BigDecimal.ZERO);
+
+        Transaction t = service.refund(PAYER, 100000, new BigDecimal("100.00"), null);
+
+        verify(bank).deposit(PAYER, new BigDecimal("100.00"));
+        assertEquals(new BigDecimal("100.00"), t.getAmount());
+        assertEquals(100000L, t.getRefundOfTransactionId());
+        assertEquals(TransactionStatus.COMPLETED, t.getStatus());
+    }
+
+    @Test
+    void refund_takesTheRowLockBeforeCheckingWhatIsLeft() {
+        when(transactions.findByTransactionId(100000)).thenReturn(Optional.of(payment(100000, PAYER, TransactionStatus.COMPLETED)));
+        when(transactions.sumRefundedAmount(100000)).thenReturn(BigDecimal.ZERO);
+
+        service.refund(PAYER, 100000, new BigDecimal("10.00"), null);
+
+        var order = inOrder(transactions);
+        order.verify(transactions).lockByTransactionId(100000);
+        order.verify(transactions).sumRefundedAmount(100000);
+        order.verify(transactions).saveAndFlush(any(Transaction.class));
+    }
+
+    @Test
+    void refund_aSecondPartialRefundUpToWhatIsLeftIsAllowed() {
+        when(transactions.findByTransactionId(100000)).thenReturn(Optional.of(payment(100000, PAYER, TransactionStatus.COMPLETED)));
+        when(transactions.sumRefundedAmount(100000)).thenReturn(new BigDecimal("100.00"));
+
+        Transaction t = service.refund(PAYER, 100000, new BigDecimal("150.00"), null);
+
+        verify(bank).deposit(PAYER, new BigDecimal("150.00"));
+        assertEquals(TransactionStatus.COMPLETED, t.getStatus());
+    }
+
+    @Test
+    void refund_moreThanWhatIsLeft_isRejectedBeforeTheBank() {
+        when(transactions.findByTransactionId(100000)).thenReturn(Optional.of(payment(100000, PAYER, TransactionStatus.COMPLETED)));
+        when(transactions.sumRefundedAmount(100000)).thenReturn(new BigDecimal("200.00"));
+
+        InvalidRequestException ex = assertThrows(InvalidRequestException.class,
+                () -> service.refund(PAYER, 100000, new BigDecimal("50.01"), null));
+
+        assertEquals("Refund amount is more than what is left to refund on this payment (50.00)", ex.getMessage());
+        verifyNoInteractions(bank);
+        assertTrue(writes.isEmpty());
+    }
+
+    @Test
+    void refund_withNoAmount_refundsExactlyWhatIsLeft() {
+        when(transactions.findByTransactionId(100000)).thenReturn(Optional.of(payment(100000, PAYER, TransactionStatus.COMPLETED)));
+        when(transactions.sumRefundedAmount(100000)).thenReturn(new BigDecimal("100.00"));
+
+        Transaction t = service.refund(PAYER, 100000, null, null);
+
+        verify(bank).deposit(PAYER, new BigDecimal("150.00"));
+        assertEquals(new BigDecimal("150.00"), t.getAmount());
+    }
+
+    @Test
+    void refund_ofAZeroOrNegativeAmount_isRejected() {
+        assertThrows(InvalidRequestException.class, () -> service.refund(PAYER, 100000, BigDecimal.ZERO, null));
+        assertThrows(InvalidRequestException.class, () -> service.refund(PAYER, 100000, new BigDecimal("-1"), null));
+        verifyNoInteractions(bank);
+    }
+
+    @Test
+    void refund_sameIdempotencyKey_differentAmount_throwsInvalidRequest() {
+        Transaction existing = new Transaction();
+        existing.setPhno(PAYER);
+        existing.setRefundOfTransactionId(100000L);
+        existing.setAmount(new BigDecimal("100.00"));
+        when(transactions.findByPhnoAndIdempotencyKey(PAYER, "refund-key")).thenReturn(Optional.of(existing));
+
+        assertThrows(InvalidRequestException.class,
+                () -> service.refund(PAYER, 100000, new BigDecimal("40.00"), "refund-key"));
+        verifyNoInteractions(bank);
+    }
+
+    @Test
+    void refund_aSameKeyRetryThatRacedInIsFoundUnderTheLock_andTheBankIsNotCalledAgain() {
+        when(transactions.findByTransactionId(100000)).thenReturn(Optional.of(payment(100000, PAYER, TransactionStatus.COMPLETED)));
+        Transaction racedIn = new Transaction();
+        racedIn.setPhno(PAYER);
+        racedIn.setRefundOfTransactionId(100000L);
+        racedIn.setAmount(new BigDecimal("100.00"));
+        racedIn.setStatus(TransactionStatus.COMPLETED);
+        // Not there on the first (unlocked) look, there once the lock is held.
+        when(transactions.findByPhnoAndIdempotencyKey(PAYER, "refund-key"))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(racedIn));
+
+        Transaction t = service.refund(PAYER, 100000, new BigDecimal("100.00"), "refund-key");
+
+        assertEquals(racedIn, t);
+        verifyNoInteractions(bank);
     }
 }

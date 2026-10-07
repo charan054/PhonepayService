@@ -442,4 +442,51 @@ class TransactionRepositoryTest {
 
         assertTrue(saved.getId() > 0);
     }
+
+    // ---------- refunds ----------
+
+    private Transaction refundOf(long transactionId, long originalId, String amount, TransactionStatus status) {
+        Transaction t = newTransaction(transactionId, ASHA, null, amount);
+        t.setMode("Refund");
+        t.setRefundOfTransactionId(originalId);
+        t.setStatus(status);
+        return t;
+    }
+
+    @Test
+    void database_allowsSeveralPartialRefundsOfTheSamePayment() {
+        repository.save(newTransaction(100000, ASHA, null, "250.00"));
+        repository.save(refundOf(100001, 100000, "100.00", TransactionStatus.COMPLETED));
+        repository.save(refundOf(100002, 100000, "50.00", TransactionStatus.COMPLETED));
+        flushAndClear();
+
+        assertEquals(0, new BigDecimal("150.00").compareTo(repository.sumRefundedAmount(100000)));
+    }
+
+    @Test
+    void sumRefundedAmount_countsPendingAndUnresolvedRefunds_butNotFailedOnes() {
+        repository.save(newTransaction(100000, ASHA, null, "250.00"));
+        repository.save(refundOf(100001, 100000, "10.00", TransactionStatus.PENDING));
+        repository.save(refundOf(100002, 100000, "20.00", TransactionStatus.NEEDS_RECONCILIATION));
+        repository.save(refundOf(100003, 100000, "40.00", TransactionStatus.FAILED));
+        flushAndClear();
+
+        assertEquals(0, new BigDecimal("30.00").compareTo(repository.sumRefundedAmount(100000)));
+    }
+
+    @Test
+    void sumRefundedAmount_isZero_notNull_forANeverRefundedPayment() {
+        repository.save(newTransaction(100000, ASHA, null, "250.00"));
+        flushAndClear();
+
+        assertEquals(0, BigDecimal.ZERO.compareTo(repository.sumRefundedAmount(100000)));
+    }
+
+    @Test
+    void lockByTransactionId_findsThePayment() {
+        repository.save(newTransaction(100000, ASHA, null, "250.00"));
+        flushAndClear();
+
+        assertEquals(100000L, repository.lockByTransactionId(100000).orElseThrow().getTransactionId());
+    }
 }
