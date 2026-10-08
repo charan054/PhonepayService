@@ -21,7 +21,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "spring.datasource.username=${MIGRATION_TEST_DB_USER:root}",
         "spring.datasource.password=${MIGRATION_TEST_DB_PASSWORD:}",
         "spring.flyway.enabled=true",
-        "spring.jpa.hibernate.ddl-auto=validate"
+        "spring.jpa.hibernate.ddl-auto=validate",
+        // The app refuses to start without its API keys; these placeholders only let the context load.
+        "bank.service.api-key=migration-test-placeholder",
+        "internal.service.api-key=migration-test-placeholder"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @EnabledIfEnvironmentVariable(named = "MIGRATION_TEST_DB_URL", matches = ".+")
