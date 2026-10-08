@@ -1,0 +1,36 @@
+name: CodeQL
+
+# Static security analysis of the Java code: on every pull request, on every push to master, and weekly (new queries
+# can flag old code). Results appear under the repository's Security > Code scanning tab.
+on:
+  pull_request:
+  push:
+    branches: [master]
+  schedule:
+    - cron: '23 3 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: java-kotlin
+          # Java can be analysed straight from source, so no build (and no JDK setup) is needed.
+          build-mode: none
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:java-kotlin
