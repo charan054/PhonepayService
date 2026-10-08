@@ -1,0 +1,47 @@
+name: Migrations
+
+# The normal tests run on H2, so they cannot tell whether the Flyway migrations really work on MySQL. This job starts a
+# throwaway empty MySQL 8, applies every migration to it and lets Hibernate validate all entities against the result
+# (MySqlMigrationsTest, which is skipped everywhere MIGRATION_TEST_DB_URL is not set).
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migrations-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mysql-migrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only-root-password
+          MYSQL_DATABASE: migration_check
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci-only-root-password"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      MIGRATION_TEST_DB_URL: jdbc:mysql://127.0.0.1:3306/migration_check
+      MIGRATION_TEST_DB_USER: root
+      MIGRATION_TEST_DB_PASSWORD: ci-only-root-password
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: corretto
+          java-version: '23'
+          cache: maven
+      - run: chmod +x mvnw
+      - run: ./mvnw -B -ntp test -Dtest=MySqlMigrationsTest
