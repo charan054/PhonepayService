@@ -1,0 +1,20 @@
+# Weekly pull requests for out-of-date Maven dependencies and GitHub Actions. Minor and patch bumps are grouped into
+# one PR per ecosystem so the list stays short; a major version bump gets its own PR so it is reviewed on its own.
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      maven-minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]
