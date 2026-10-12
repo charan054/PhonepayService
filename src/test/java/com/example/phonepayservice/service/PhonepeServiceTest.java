@@ -848,6 +848,26 @@ class PhonepeServiceTest {
     }
 
     @Test
+    void merchantRefund_paysBackToTheAccountThatMadeThePayment() {
+        when(transactions.findByTransactionId(100000)).thenReturn(Optional.of(payment(100000, PAYER, TransactionStatus.COMPLETED)));
+        when(transactions.sumRefundedAmount(100000)).thenReturn(BigDecimal.ZERO);
+
+        Transaction t = service.merchantRefund(100000, null, null);
+
+        verify(bank).deposit(PAYER, AMOUNT);
+        assertEquals(PAYER, t.getPhno());
+        assertEquals(100000L, t.getRefundOfTransactionId());
+    }
+
+    @Test
+    void merchantRefund_ofAnUnknownTransaction_isNotFound() {
+        when(transactions.findByTransactionId(5)).thenReturn(Optional.empty());
+
+        assertThrows(TransactionNotFoundException.class, () -> service.merchantRefund(5, null, null));
+        verifyNoInteractions(bank);
+    }
+
+    @Test
     void refund_ofSomeoneElsesPayment_isNotFound_notForbidden() {
         when(transactions.findByTransactionId(100000)).thenReturn(Optional.of(payment(100000, STRANGER, TransactionStatus.COMPLETED)));
 
