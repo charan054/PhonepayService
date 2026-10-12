@@ -64,11 +64,11 @@ public class WebConfig implements WebMvcConfigurer {
         // bare path with no trailing slash, which silently left the POST endpoint unguarded by this interceptor
         // and falling through to AuthInterceptor's Bearer-token check instead (a merchant call has no such token).
         registry.addInterceptor(new ServiceKeyInterceptor(serviceApiKey))
-                .addPathPatterns("/phonepe/upi/collect", "/phonepe/upi/collect/**");
+                .addPathPatterns("/phonepe/upi/collect", "/phonepe/upi/collect/**", "/phonepe/merchant/**");
 
         registry.addInterceptor(new AuthInterceptor(sessions))
                 .addPathPatterns("/phonepe/**")
-                .excludePathPatterns("/phonepe/login", "/phonepe/upi/collect", "/phonepe/upi/collect/**",
+                .excludePathPatterns("/phonepe/login", "/phonepe/upi/collect", "/phonepe/upi/collect/**", "/phonepe/merchant/**",
                         "/phonepe/forgotpin/request", "/phonepe/forgotpin/reset");
 
         // Rate-limited per authenticated account (registered AFTER AuthInterceptor, so the phno attribute it sets

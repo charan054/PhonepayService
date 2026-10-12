@@ -198,6 +198,18 @@ public class PhonepeService {
     }
 
     /**
+     * The merchant's side of refund(): a trusted backend (X-Service-Key) pays a payment back when the buyer's own
+     * session is not available - e.g. OrderService settling a refund that failed while it was undoing a checkout.
+     * The money can only go where it came from: the payer is read off the original payment, never supplied by the
+     * caller, and every rule of refund() (a completed Payment only, never more than what is left) still applies.
+     */
+    public Transaction merchantRefund(long originalTransactionId, BigDecimal amount, String idempotencyKey) {
+        Transaction original = transactions.findByTransactionId(originalTransactionId)
+                .orElseThrow(() -> new TransactionNotFoundException("Transaction not found"));
+        return refund(original.getPhno(), originalTransactionId, amount, idempotencyKey);
+    }
+
+    /**
      * Writes the PENDING refund row in one short database transaction that first locks the original payment's
      * row. Every refund of the same payment goes through that lock, so "how much is still refundable" can't be
      * read by two requests at once and both be paid out - this replaces the unique index that used to limit a
