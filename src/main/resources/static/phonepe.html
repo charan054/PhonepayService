@@ -429,6 +429,29 @@
           .hero h1{font-size:34px}
           .container{width:min(100% - 24px,1180px)}
         }
+        /* ---- dark mode: follows the device setting; the page is light by default ---- */
+        @media (prefers-color-scheme: dark){
+          :root{
+            color-scheme:dark;
+            --bg:#0b1220; --card:#111c2e; --text:#e2e8f0; --muted:#94a3b8; --border:#27364d;
+            --shadow:0 18px 45px rgba(0,0,0,.45);
+          }
+          body{background:linear-gradient(135deg,#0b1220,#0f1b30,#0b1a2e)}
+          .hero{color:#bae6fd}
+          .hero h1{color:#e0f2fe}
+          .hero p,.card h2{color:#7dd3fc}
+          .hero-badge,.session-bar{background:rgba(17,28,46,.85);border-color:#27364d;color:#e2e8f0}
+          .card{background:rgba(17,28,46,.96);border-color:#27364d}
+          .icon,.method{background:#0c2a44;color:#7dd3fc}
+          input{background:#0b1626;color:#e2e8f0;border-color:#27364d}
+          input::placeholder{color:#64748b}
+          .status-panel{background:#111c2e;color:#bae6fd}
+          .payee-row,.tx-row{background:#0f1b30;border-color:#27364d;color:#e2e8f0}
+          .status-completed{background:#052e16;color:#86efac}
+          .status-failed{background:#450a0a;color:#fca5a5}
+          .status-pending{background:#1e293b;color:#cbd5e1}
+          .status-needs_reconciliation{background:#422006;color:#fcd34d}
+        }
     </style>
 </head>
 <body>
