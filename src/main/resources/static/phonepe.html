@@ -429,6 +429,10 @@
           .hero h1{font-size:34px}
           .container{width:min(100% - 24px,1180px)}
         }
+        .wallet-balance{font-size:38px;font-weight:950;color:var(--primary-dark);margin:6px 0 4px}
+        .wallet-actions{display:flex;gap:10px;flex-wrap:wrap}
+        .wallet-actions button{width:auto;flex:1 1 120px}
+        .wallet-actions .secondary-btn{background:transparent;color:var(--primary-dark);border:2px solid var(--primary-dark);box-shadow:none}
         /* ---- dark mode: follows the device setting; the page is light by default ---- */
         @media (prefers-color-scheme: dark){
           :root{
@@ -447,6 +451,8 @@
           input::placeholder{color:#64748b}
           .status-panel{background:#111c2e;color:#bae6fd}
           .payee-row,.tx-row{background:#0f1b30;border-color:#27364d;color:#e2e8f0}
+          .wallet-balance{color:#7dd3fc}
+          .wallet-actions .secondary-btn{color:#7dd3fc;border-color:#7dd3fc}
           .status-completed{background:#052e16;color:#86efac}
           .status-failed{background:#450a0a;color:#fca5a5}
           .status-pending{background:#1e293b;color:#cbd5e1}
@@ -506,6 +512,19 @@
     </section>
 
     <section class="grid" id="dashboardSection" style="display:none">
+
+        <div class="card wallet-card">
+            <div class="card-title">
+                <div class="icon">👛</div>
+                <h2>My Wallet</h2>
+            </div>
+            <div class="wallet-balance" id="walletBalance" aria-live="polite">&mdash;</div>
+            <p id="walletNote">Your balance at the bank, available for payments and transfers.</p>
+            <div class="wallet-actions">
+                <button type="button" onclick="refreshWalletBalance(true)">Refresh</button>
+                <button type="button" class="secondary-btn" onclick="openAddMoney()">Add money</button>
+            </div>
+        </div>
 
         <div class="card">
             <div class="card-title">
@@ -707,6 +726,34 @@
       getMoneyRequests();
       getRecurringPayments();
       renderMyQrCode();
+      refreshWalletBalance(false);
+    }
+
+    // Shows the live balance on the dashboard (GET /phonepe/balance). Quiet on failure: the card keeps its dash and the
+    // "Refresh" button explains what went wrong, so a hiccup never throws a result tab at someone who only logged in.
+    async function refreshWalletBalance(loud) {
+      const box = document.getElementById("walletBalance");
+      const note = document.getElementById("walletNote");
+      if (!box || !sessionToken) return;
+      try {
+        const response = await fetch(`${BASE_URL}/balance`, { headers: { "Authorization": "Bearer " + sessionToken } });
+        if (!response.ok) throw new Error(response.status === 401 ? "Please log in again." : "The bank did not answer. Try Refresh in a moment.");
+        const data = await response.json();
+        box.textContent = "₹" + Number(data.balance).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        note.textContent = Number(data.balance) <= 0
+          ? "Your wallet is empty. Use Add money to deposit at the bank, then press Refresh."
+          : "Your balance at the bank, available for payments and transfers.";
+        if (loud) showStatus("Balance updated.", "success");
+      } catch (e) {
+        note.textContent = e.message;
+        if (loud) showStatus(e.message, "error");
+      }
+    }
+
+    // Money enters the system at the bank (its own self-service deposit), so "Add money" sends people there instead of
+    // minting funds from this service. Same host, the bank's port.
+    function openAddMoney() {
+      window.open(location.protocol + "//" + location.hostname + ":8080/bankuser.html", "_blank", "noopener");
     }
 
     // Single source of truth for which screen is showing: logged out sees only the login card, logged in sees
