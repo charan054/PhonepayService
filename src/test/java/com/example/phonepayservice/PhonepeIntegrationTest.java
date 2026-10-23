@@ -100,6 +100,8 @@ class PhonepeIntegrationTest {
     @Autowired
     private RecurringPaymentRepository recurringPaymentRepository;
     @Autowired
+    private com.example.phonepayservice.repository.PaymentMandateRepository mandateRepository;
+    @Autowired
     private RecurringPaymentService recurringPaymentService;
 
     @BeforeEach
@@ -107,6 +109,7 @@ class PhonepeIntegrationTest {
         transactionRepository.deleteAll();
         sessionRepository.deleteAll();
         recurringPaymentRepository.deleteAll();
+        mandateRepository.deleteAll();
     }
 
     // ============ the fake bank ============
@@ -172,6 +175,145 @@ class PhonepeIntegrationTest {
         return "PUT /bank/withdrawByphno?phno=" + phno + "&balance=" + amount;
     }
 
+
+    // ============ payment mandates (standing permission for the shop to charge within limits) ============
+
+    private static final String SERVICE_KEY_HEADER = "X-Service-Key";
+    private static final String INTERNAL_KEY = "test-internal-service-key";
+
+    private long createMandate(String token, String perCharge, String monthly) throws Exception {
+        String body = mockMvc.perform(as(token, post("/phonepe/mandates")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"perChargeLimit\":" + perCharge + ",\"monthlyLimit\":" + monthly + ",\"validDays\":30,\"pin\":\"" + PIN + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACTIVE"))
+                .andReturn().getResponse().getContentAsString();
+        return ((Number) JsonPath.read(body, "$.id")).longValue();
+    }
+
+    private MockHttpServletRequestBuilder charge(long mandateId, String amount, String key) {
+        return post("/phonepe/merchant/mandates/" + mandateId + "/charge").header(SERVICE_KEY_HEADER, INTERNAL_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"amount\":" + amount + ",\"idempotencyKey\":\"" + key + "\"}");
+    }
+
+    @Test
+    void mandate_theShopChargesWithinTheLimits_andTheCustomerSeesItAsAnOrdinaryPayment() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 5000.0);
+        withdrawSucceeds(ASHA);
+        String token = login(ASHA);
+        long id = createMandate(token, "1000", "1500");
+        bank.resetRequests();
+
+        mockMvc.perform(charge(id, "400", "sub-1-a"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mode").value("Payment"))
+                .andExpect(jsonPath("$.status").value("COMPLETED"));
+
+        assertEquals(List.of(withdraw(ASHA, "400.00")), bankCalls());
+        mockMvc.perform(as(token, get("/phonepe/mandates")))
+                .andExpect(jsonPath("$[0].chargedThisMonth").value(400))
+                .andExpect(jsonPath("$[0].remainingThisMonth").value(1100));
+    }
+
+    @Test
+    void mandate_overThePerChargeOrMonthlyLimitIsRefusedAndNothingIsDebited() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 5000.0);
+        withdrawSucceeds(ASHA);
+        String token = login(ASHA);
+        long id = createMandate(token, "1000", "1500");
+        mockMvc.perform(charge(id, "900", "sub-1-a")).andExpect(status().isOk());
+        bank.resetRequests();
+
+        mockMvc.perform(charge(id, "1000.01", "sub-1-b")).andExpect(status().isBadRequest());     // over one charge
+        mockMvc.perform(charge(id, "700", "sub-1-c")).andExpect(status().isBadRequest());         // 900 + 700 > 1500
+
+        assertEquals(List.of(), bankCalls());
+    }
+
+    @Test
+    void mandate_retryingTheSameChargeIsNotDebitedOrCountedTwice() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 5000.0);
+        withdrawSucceeds(ASHA);
+        String token = login(ASHA);
+        long id = createMandate(token, "1000", "1500");
+        bank.resetRequests();
+
+        String first = mockMvc.perform(charge(id, "600", "sub-1-a")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        String again = mockMvc.perform(charge(id, "600", "sub-1-a")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+
+        assertEquals((Object) JsonPath.read(first, "$.transactionId"), JsonPath.read(again, "$.transactionId"));
+        assertEquals(List.of(withdraw(ASHA, "600.00")), bankCalls());
+        mockMvc.perform(as(token, get("/phonepe/mandates"))).andExpect(jsonPath("$[0].chargedThisMonth").value(600));
+    }
+
+    @Test
+    void mandate_aPaymentTheBankRefusesGivesTheAllowanceBack() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 50.0);
+        String token = login(ASHA);
+        long id = createMandate(token, "1000", "1500");
+        bank.stubFor(WireMock.put(urlPathEqualTo("/bank/withdrawByphno"))
+                .willReturn(aResponse().withStatus(400).withHeader("Content-Type", "text/plain").withBody("Insufficient Funds")));
+
+        mockMvc.perform(charge(id, "600", "sub-1-a")).andExpect(status().is4xxClientError());
+
+        mockMvc.perform(as(token, get("/phonepe/mandates"))).andExpect(jsonPath("$[0].chargedThisMonth").value(0));
+    }
+
+    @Test
+    void mandate_revokingStopsTheShopImmediately_andOnlyTheOwnerCanRevoke() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 5000.0);
+        withdrawSucceeds(ASHA);
+        String token = login(ASHA);
+        long id = createMandate(token, "1000", "1500");
+        bankHasUser(RAVI, "RAVI KUMAR", 5000.0);
+        String other = login(RAVI);
+
+        mockMvc.perform(as(other, delete("/phonepe/mandates/" + id))).andExpect(status().isNotFound());
+        mockMvc.perform(as(token, delete("/phonepe/mandates/" + id))).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REVOKED"));
+        bank.resetRequests();
+
+        mockMvc.perform(charge(id, "100", "sub-1-a")).andExpect(status().isBadRequest());
+        assertEquals(List.of(), bankCalls());
+    }
+
+    @Test
+    void mandate_settingOneUpNeedsTheRightPin_andSensibleLimits() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 5000.0);
+        String token = login(ASHA);
+        bankLoginFails(401, "Invalid phone number or PIN");
+
+        mockMvc.perform(as(token, post("/phonepe/mandates")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"perChargeLimit\":100,\"monthlyLimit\":200,\"validDays\":30,\"pin\":\"9999\"}"))
+                .andExpect(status().isUnauthorized());
+        bankLoginSucceeds(ASHA, "ASHA KUMAR");
+        mockMvc.perform(as(token, post("/phonepe/mandates")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"perChargeLimit\":300,\"monthlyLimit\":200,\"validDays\":30,\"pin\":\"" + PIN + "\"}"))
+                .andExpect(status().isBadRequest());                      // one charge cannot exceed the month
+        mockMvc.perform(as(token, post("/phonepe/mandates")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"perChargeLimit\":99999999,\"monthlyLimit\":99999999,\"validDays\":30,\"pin\":\"" + PIN + "\"}"))
+                .andExpect(status().isBadRequest());                      // beyond the bank's ceiling
+    }
+
+    @Test
+    void mandate_theShopsRoutesNeedTheServiceKey() throws Exception {
+        mockMvc.perform(post("/phonepe/merchant/mandates/1/charge").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\":10,\"idempotencyKey\":\"k\"}"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/phonepe/merchant/mandates/1")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void mandate_theShopCanLookOneUpToCheckWhoseItIs() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 5000.0);
+        String token = login(ASHA);
+        long id = createMandate(token, "1000", "1500");
+
+        mockMvc.perform(get("/phonepe/merchant/mandates/" + id).header(SERVICE_KEY_HEADER, INTERNAL_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.payerPhno").value(ASHA))
+                .andExpect(jsonPath("$.perChargeLimit").value(1000));
+        mockMvc.perform(get("/phonepe/merchant/mandates/99999").header(SERVICE_KEY_HEADER, INTERNAL_KEY)).andExpect(status().isNotFound());
+    }
     // ============ the app under test ============
 
     private String login(long phno) throws Exception {
