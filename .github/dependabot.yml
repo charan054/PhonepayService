@@ -7,6 +7,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # IntelliJ's Maven server fails on wrappers that use Maven 3.10.x (ArtifactHandlerManager), so keep the
+      # wrapper on 3.9.x until IntelliJ supports it.
+      - dependency-name: "org.apache.maven:apache-maven"
+        versions: ["3.10.x"]
     groups:
       maven-minor-and-patch:
         update-types: [minor, patch]
