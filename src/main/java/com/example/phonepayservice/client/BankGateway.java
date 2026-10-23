@@ -49,7 +49,7 @@ public class BankGateway {
      */
     public BankLoginResult login(long phno, String pin) {
         try {
-            return bank.login(new BankLoginRequest(phno, pin));
+            return bank.login(serviceKey, new BankLoginRequest(phno, pin));
         } catch (FeignException.Unauthorized e) {
             throw new InvalidCredentialsException(orDefault(e.contentUTF8(), "Invalid phone number or PIN"));
         } catch (FeignException.FeignClientException e) {

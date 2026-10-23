@@ -217,6 +217,9 @@ class PhonepeIntegrationTest {
         mockMvc.perform(as(token, get("/phonepe/profile"))).andExpect(status().isOk());
 
         bank.verify(getRequestedFor(urlPathEqualTo("/bank/displayuser")).withHeader("X-Service-Key", equalTo("test-service-key")));
+        // the login too: the bank skips its "new login" email and per-address limit for a trusted backend
+        bank.verify(com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor(urlPathEqualTo("/bank/login"))
+                .withHeader("X-Service-Key", equalTo("test-service-key")));
     }
 
     @Test
