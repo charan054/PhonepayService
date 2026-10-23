@@ -18,11 +18,13 @@ import java.math.BigDecimal;
 
 // Talk to the bank through BankGateway, which supplies the X-Service-Key header and turns the bank's answers
 // and failures into meaningful exceptions. The Bank app now requires this header on every one of these calls,
-// EXCEPT login: POST /bank/login is public on the bank's side, because that call itself is the credential check.
+// EXCEPT where noted. POST /bank/login is public on the bank's side (that call itself is the credential check), but it is sent
+// WITH the service key too: the bank then treats it as a trusted backend logging a customer in - no "new login" email for
+// every PhonePe login, and the bank's per-address login limit (all our customers share one address) is skipped.
 @FeignClient(name = "Bankapplication", url = "${bank.service.url}")
 public interface BankClient {
     @PostMapping("/bank/login")
-    BankLoginResult login(@RequestBody BankLoginRequest request);
+    BankLoginResult login(@RequestHeader("X-Service-Key") String serviceKey, @RequestBody BankLoginRequest request);
 
     // Both public on the bank's side (no X-Service-Key), same reasoning as login: the request itself carries
     // whatever proof of identity it needs (a code emailed by the bank, for reset), not this service's own key.
