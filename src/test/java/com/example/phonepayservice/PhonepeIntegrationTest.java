@@ -314,6 +314,23 @@ class PhonepeIntegrationTest {
                 .andExpect(jsonPath("$.perChargeLimit").value(1000));
         mockMvc.perform(get("/phonepe/merchant/mandates/99999").header(SERVICE_KEY_HEADER, INTERNAL_KEY)).andExpect(status().isNotFound());
     }
+
+    @Test
+    void mandate_theShopCanListAndRevokeACustomersMandatesButOnlyTheirOwn() throws Exception {
+        bankHasUser(ASHA, "ASHA KUMAR", 5000.0);
+        bankHasUser(RAVI, "RAVI KUMAR", 5000.0);
+        long ashas = createMandate(login(ASHA), "1000", "1500");
+
+        mockMvc.perform(get("/phonepe/merchant/mandates").param("payerPhno", "" + ASHA).header(SERVICE_KEY_HEADER, INTERNAL_KEY))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1)).andExpect(jsonPath("$[0].id").value(ashas));
+        mockMvc.perform(get("/phonepe/merchant/mandates").param("payerPhno", "" + RAVI).header(SERVICE_KEY_HEADER, INTERNAL_KEY))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(0));
+        mockMvc.perform(delete("/phonepe/merchant/mandates/" + ashas).param("payerPhno", "" + RAVI).header(SERVICE_KEY_HEADER, INTERNAL_KEY))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(delete("/phonepe/merchant/mandates/" + ashas).param("payerPhno", "" + ASHA).header(SERVICE_KEY_HEADER, INTERNAL_KEY))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REVOKED"));
+        mockMvc.perform(get("/phonepe/merchant/mandates").param("payerPhno", "" + ASHA)).andExpect(status().isUnauthorized());
+    }
     // ============ the app under test ============
 
     private String login(long phno) throws Exception {
