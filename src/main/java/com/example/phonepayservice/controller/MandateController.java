@@ -46,6 +46,18 @@ public class MandateController {
         return mandates.revoke(caller, id);
     }
 
+    // The shop shows a customer their own mandates after its own sign-in check, so it lists them by phone number here.
+    @GetMapping("/merchant/mandates")
+    public List<MandateDtos.View> listForPayer(@org.springframework.web.bind.annotation.RequestParam long payerPhno) {
+        return mandates.listFor(payerPhno);
+    }
+
+    // Revoking is always safe, so the shop may do it for a customer whose session it has verified. Only that customer's own mandate.
+    @DeleteMapping("/merchant/mandates/{id}")
+    public MandateDtos.View revokeForPayer(@PathVariable long id, @org.springframework.web.bind.annotation.RequestParam long payerPhno) {
+        return mandates.revoke(payerPhno, id);
+    }
+
     @GetMapping("/merchant/mandates/{id}")
     public MandateDtos.View lookup(@PathVariable long id) {
         return mandates.lookup(id);
