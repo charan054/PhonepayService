@@ -55,6 +55,11 @@ public class GlobalExceptionHandler {
         return reply(HttpStatus.NOT_FOUND, e.getMessage());
     }
 
+    @ExceptionHandler(DisputeNotFoundException.class)
+    public ResponseEntity<String> handleDisputeNotFound(DisputeNotFoundException e) {
+        return reply(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
     @ExceptionHandler(PayeeNotFoundException.class)
     public ResponseEntity<String> handlePayeeNotFound(PayeeNotFoundException e) {
         return reply(HttpStatus.NOT_FOUND, e.getMessage());
