@@ -12,6 +12,7 @@ import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -59,6 +60,27 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
             + "AND (t.status IS NULL OR t.status = com.example.phonepayservice.entity.TransactionStatus.COMPLETED) "
             + "AND t.createdAt >= :from AND t.createdAt <= :to")
     BigDecimal sumReceived(@Param("viewer") long viewer, @Param("from") Instant from, @Param("to") Instant to);
+
+    // What went out in one mode ("Payment" to the shop, "Transfer" to a person), same COMPLETED-only rule as sumSent.
+    @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t WHERE t.phno = :viewer AND t.mode = :mode "
+            + "AND (t.status IS NULL OR t.status = com.example.phonepayservice.entity.TransactionStatus.COMPLETED) "
+            + "AND t.createdAt >= :from AND t.createdAt <= :to")
+    BigDecimal sumSentByMode(@Param("viewer") long viewer, @Param("mode") String mode,
+                             @Param("from") Instant from, @Param("to") Instant to);
+
+    // Payments paid back to the viewer: a "Refund" row has phno = the person credited.
+    @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t WHERE t.phno = :viewer AND t.mode = 'Refund' "
+            + "AND (t.status IS NULL OR t.status = com.example.phonepayservice.entity.TransactionStatus.COMPLETED) "
+            + "AND t.createdAt >= :from AND t.createdAt <= :to")
+    BigDecimal sumRefunded(@Param("viewer") long viewer, @Param("from") Instant from, @Param("to") Instant to);
+
+    // The people the viewer sent the most to: [receiverPhno, total, count], biggest total first.
+    @Query("SELECT t.receiverPhno, SUM(t.amount), COUNT(t) FROM Transaction t WHERE t.phno = :viewer AND t.mode = 'Transfer' "
+            + "AND t.receiverPhno IS NOT NULL "
+            + "AND (t.status IS NULL OR t.status = com.example.phonepayservice.entity.TransactionStatus.COMPLETED) "
+            + "AND t.createdAt >= :from AND t.createdAt <= :to GROUP BY t.receiverPhno ORDER BY SUM(t.amount) DESC")
+    List<Object[]> topTransferTargets(@Param("viewer") long viewer, @Param("from") Instant from, @Param("to") Instant to,
+                                      Pageable limit);
 
     @Query("SELECT COUNT(t) FROM Transaction t WHERE t.phno = :viewer AND t.mode <> 'Refund' "
             + "AND (t.status IS NULL OR t.status = com.example.phonepayservice.entity.TransactionStatus.COMPLETED) "
